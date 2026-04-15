@@ -62,11 +62,13 @@ function statusBadge(status) {
 }
 
 async function apiFetch(url, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  const safeMethod = method === 'GET' || method === 'HEAD';
   const res = await fetch(url, {
     ...opts,
     headers: {
       ...(opts.headers || {}),
-      ...(opts.method && opts.method !== 'GET' ? { 'X-CSRF-Token': csrfToken } : {}),
+      ...(!safeMethod ? { 'X-CSRF-Token': csrfToken } : {}),
     },
   });
   if (res.status === 401) {

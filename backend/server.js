@@ -96,12 +96,18 @@ async function initDB() {
     )
   `);
 
-  // Seed default admin
+  // Seed default admin with a random temporary password
   const admin = await get('SELECT id FROM admin WHERE username = ?', ['admin']);
   if (!admin) {
-    const hash = await bcrypt.hash('admin123', 10);
+    const tempPassword = require('crypto').randomBytes(12).toString('hex');
+    const hash = await bcrypt.hash(tempPassword, 10);
     await run('INSERT INTO admin (username, password, first_login) VALUES (?,?,1)', ['admin', hash]);
-    console.log('Default admin created. Please change the password after first login.');
+    console.log('═══════════════════════════════════════════════════');
+    console.log('  Default admin created.');
+    console.log(`  Username : admin`);
+    console.log(`  Password : ${tempPassword}`);
+    console.log('  ⚠️  Change this password immediately after login!');
+    console.log('═══════════════════════════════════════════════════');
   }
 }
 

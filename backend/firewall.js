@@ -1,6 +1,6 @@
 'use strict';
 
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 
 // Strict validators to prevent command injection
 const IP_PATTERN = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -18,6 +18,7 @@ function validateMAC(mac) {
 
 /**
  * Block outbound traffic from a specific IP via Windows Firewall.
+ * Uses execFile with PowerShell arguments as an array to avoid command injection.
  * @param {string} ip   Remote IP address of the device to block.
  * @param {string} mac  MAC address used as part of the rule name.
  */
@@ -26,8 +27,8 @@ function block(ip, mac) {
     validateIP(ip);
     validateMAC(mac);
     const ruleName = `WIFIOS_BLOCK_${mac.replace(/:/g, '')}`;
-    const cmd = `powershell -Command "New-NetFirewallRule -DisplayName '${ruleName}' -Direction Outbound -RemoteAddress '${ip}' -Action Block -ErrorAction SilentlyContinue"`;
-    exec(cmd, (err) => {
+    const psScript = `New-NetFirewallRule -DisplayName '${ruleName}' -Direction Outbound -RemoteAddress '${ip}' -Action Block -ErrorAction SilentlyContinue`;
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psScript], (err) => {
       if (err) console.error(`[firewall] block error for ${mac}:`, err.message);
       else console.log(`[firewall] blocked ${ip} (${mac})`);
     });
@@ -38,14 +39,15 @@ function block(ip, mac) {
 
 /**
  * Remove a previously created block rule by MAC address.
+ * Uses execFile with PowerShell arguments as an array to avoid command injection.
  * @param {string} mac  MAC address used when creating the rule.
  */
 function allow(mac) {
   try {
     validateMAC(mac);
     const ruleName = `WIFIOS_BLOCK_${mac.replace(/:/g, '')}`;
-    const cmd = `powershell -Command "Remove-NetFirewallRule -DisplayName '${ruleName}' -ErrorAction SilentlyContinue"`;
-    exec(cmd, (err) => {
+    const psScript = `Remove-NetFirewallRule -DisplayName '${ruleName}' -ErrorAction SilentlyContinue`;
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psScript], (err) => {
       if (err) console.error(`[firewall] allow error for ${mac}:`, err.message);
       else console.log(`[firewall] allowed ${mac}`);
     });
