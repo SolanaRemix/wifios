@@ -1,5 +1,8 @@
 'use strict';
 
+// CSRF token is stored in sessionStorage after login
+let csrfToken = sessionStorage.getItem('csrfToken') || '';
+
 // ──────────────────────────────────────────────
 // Navigation
 // ──────────────────────────────────────────────
@@ -59,7 +62,13 @@ function statusBadge(status) {
 }
 
 async function apiFetch(url, opts = {}) {
-  const res = await fetch(url, opts);
+  const res = await fetch(url, {
+    ...opts,
+    headers: {
+      ...(opts.headers || {}),
+      ...(opts.method && opts.method !== 'GET' ? { 'X-CSRF-Token': csrfToken } : {}),
+    },
+  });
   if (res.status === 401) {
     window.location.href = '/login.html';
     return null;

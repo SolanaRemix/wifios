@@ -64,5 +64,5 @@ Write-Host "👉 Start the system with:" -ForegroundColor White
 Write-Host "     .\scripts\start.ps1" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "🌐 Admin panel will be at: http://localhost:3000/login.html" -ForegroundColor White
-Write-Host "🔑 Default credentials:  admin / admin123  (change on first login)" -ForegroundColor White
+Write-Host "🔑 Log in with the default admin credentials and change your password on first login." -ForegroundColor Yellow
 Write-Host ""

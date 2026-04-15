@@ -130,6 +130,7 @@
           return;
         }
 
+        if (data.csrfToken) sessionStorage.setItem('csrfToken', data.csrfToken);
         window.location.href = data.redirect || '/admin/dashboard.html';
       } catch {
         showError('Network error. Please try again.');

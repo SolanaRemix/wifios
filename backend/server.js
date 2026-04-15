@@ -10,7 +10,8 @@ const { db, run, get, all } = require('./db');
 const { confirmPayment, createPayment } = require('./payment');
 const { generateVoucher } = require('./voucher');
 const { generateQR } = require('./qr');
-const { getStats } = require('./analytics');const { generateReceipt } = require('./receipt');
+const { getStats } = require('./analytics');
+const { generateReceipt } = require('./receipt');
 const { block, allow } = require('./firewall');
 
 const app = express();
@@ -112,6 +113,18 @@ function requireAdmin(req, res, next) {
   return res.status(401).json({ error: 'Unauthorised' });
 }
 
+/**
+ * CSRF protection middleware for state-changing admin routes.
+ * Requires the X-CSRF-Token header to match the token stored in the session.
+ */
+function requireCSRF(req, res, next) {
+  const token = req.headers['x-csrf-token'];
+  if (!token || token !== req.session.csrfToken) {
+    return res.status(403).json({ error: 'Invalid CSRF token' });
+  }
+  next();
+}
+
 // ──────────────────────────────────────────────
 // Routes – Authentication
 // ──────────────────────────────────────────────
@@ -127,18 +140,19 @@ app.post('/login', async (req, res) => {
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
     req.session.adminId = row.id;
+    req.session.csrfToken = uuidv4();
 
     if (row.first_login) {
-      return res.json({ redirect: '/change-password.html' });
+      return res.json({ redirect: '/change-password.html', csrfToken: req.session.csrfToken });
     }
-    return res.json({ success: true, redirect: '/admin/dashboard.html' });
+    return res.json({ success: true, redirect: '/admin/dashboard.html', csrfToken: req.session.csrfToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.post('/change-password', requireAdmin, async (req, res) => {
+app.post('/change-password', requireAdmin, requireCSRF, async (req, res) => {
   const { pass } = req.body;
   if (!pass || pass.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
@@ -169,7 +183,7 @@ app.get('/users', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/block/:mac', requireAdmin, async (req, res) => {
+app.post('/block/:mac', requireAdmin, requireCSRF, async (req, res) => {
   const { mac } = req.params;
   if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(mac)) {
     return res.status(400).json({ error: 'Invalid MAC address' });
@@ -184,7 +198,7 @@ app.post('/block/:mac', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/allow/:mac', requireAdmin, async (req, res) => {
+app.post('/allow/:mac', requireAdmin, requireCSRF, async (req, res) => {
   const { mac } = req.params;
   if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(mac)) {
     return res.status(400).json({ error: 'Invalid MAC address' });
@@ -227,7 +241,7 @@ app.post('/pay', async (req, res) => {
   }
 });
 
-app.post('/confirm-payment', requireAdmin, async (req, res) => {
+app.post('/confirm-payment', requireAdmin, requireCSRF, async (req, res) => {
   const { ref } = req.body;
   if (!ref) return res.status(400).json({ error: 'Missing payment ref' });
 
@@ -269,7 +283,7 @@ app.get('/payments', requireAdmin, async (req, res) => {
 // ──────────────────────────────────────────────
 // Routes – Vouchers
 // ──────────────────────────────────────────────
-app.post('/voucher/generate', requireAdmin, async (req, res) => {
+app.post('/voucher/generate', requireAdmin, requireCSRF, async (req, res) => {
   const { time } = req.body;
   if (!time || isNaN(Number(time)) || Number(time) <= 0) {
     return res.status(400).json({ error: 'Invalid time value' });

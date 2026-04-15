@@ -4,7 +4,6 @@ const { all, get } = require('./db');
 
 /**
  * Return aggregated statistics for the admin dashboard.
- * @param {object} _db  (unused — module-level db is used directly)
  * @returns {Promise<object>}
  */
 async function getStats() {
