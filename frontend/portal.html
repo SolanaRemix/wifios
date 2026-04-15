@@ -269,6 +269,11 @@
       const timerEl = document.getElementById('timer');
       timerEl.style.display = 'block';
       let remaining = seconds;
+      // Clear any existing timer before starting a new one
+      if (sessionInterval) {
+        clearInterval(sessionInterval);
+        sessionInterval = null;
+      }
       const update = () => {
         const h = Math.floor(remaining / 3600);
         const m = Math.floor((remaining % 3600) / 60);
@@ -277,6 +282,7 @@
           `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
         if (remaining <= 0) {
           clearInterval(sessionInterval);
+          sessionInterval = null;
           timerEl.textContent = '00:00:00';
           showStatus('⏱ Your session has expired.', 'error');
         }

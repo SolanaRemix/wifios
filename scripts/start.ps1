@@ -56,7 +56,20 @@ Write-Host "  DNS       PID: $($dns.Id)"       -ForegroundColor Gray
 Write-Host "  Scheduler PID: $($scheduler.Id)" -ForegroundColor Gray
 Write-Host "  MAC Engine PID: $($macEngine.Id)" -ForegroundColor Gray
 Write-Host ""
-Write-Host "Press Ctrl+C or close this window to stop." -ForegroundColor Gray
+Write-Host ""
+Write-Host "Press Ctrl+C or close this window to stop all services." -ForegroundColor Gray
 
-# Keep window open
-Wait-Process -Id $server.Id
+# Register a clean-up handler so Ctrl+C kills child processes
+$null = Register-EngineEvent PowerShell.Exiting -Action {
+    foreach ($pid in @($server.Id, $dns.Id, $scheduler.Id, $macEngine.Id)) {
+        try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    Write-Host "🛑 All WiFi Zone OS services stopped." -ForegroundColor Red
+}
+
+# Wait until the main server exits; if it does, stop the others too
+Wait-Process -Id $server.Id -ErrorAction SilentlyContinue
+foreach ($proc in @($dns, $scheduler, $macEngine)) {
+    try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+}
+Write-Host "🛑 Server exited — all child services stopped." -ForegroundColor Red

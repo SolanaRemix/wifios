@@ -8,6 +8,10 @@
 param()
 $ErrorActionPreference = "Stop"
 
+# ── Resolve & change to the project root ─────────────────────────────────────
+$Root = Split-Path $PSScriptRoot -Parent
+Set-Location $Root
+
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "   WiFi Zone OS V3 — Installer                    " -ForegroundColor Cyan
@@ -34,27 +38,37 @@ if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed." }
 Write-Host "✅ Dependencies installed" -ForegroundColor Green
 
 # ── 3. Create db directory if missing ────────────────────────────────────────
-if (-not (Test-Path "db")) { New-Item -ItemType Directory -Path "db" | Out-Null }
+if (-not (Test-Path (Join-Path $Root "db"))) {
+    New-Item -ItemType Directory -Path (Join-Path $Root "db") | Out-Null
+}
 
 # ── 4. Initialise database ───────────────────────────────────────────────────
 Write-Host ""
 Write-Host "🗄️  Initialising database..." -ForegroundColor Yellow
-node -e @"
-const sqlite3 = require('sqlite3').verbose();
-const path    = require('path');
-const fs      = require('fs');
-const schema  = fs.readFileSync(path.join(__dirname, 'db', 'schema.sql'), 'utf8');
-const db      = new sqlite3.Database(path.join(__dirname, 'db', 'wifi.db'));
-db.exec(schema, (err) => {
-  if (err) { console.error('Schema error:', err.message); process.exit(1); }
-  console.log('DB initialised.');
-  db.close();
-});
-"@
+# Use npm run init-db — it resolves its own paths relative to the project root
+node scripts/init-db.js
 if ($LASTEXITCODE -ne 0) { Write-Error "Database initialisation failed." }
 Write-Host "✅ Database ready" -ForegroundColor Green
 
-# ── 5. Summary ───────────────────────────────────────────────────────────────
+# ── 5. Register auto-start task (optional, requires Admin) ───────────────────
+Write-Host ""
+$answer = Read-Host "📋 Register WiFi Zone OS to auto-start on logon? (y/N)"
+if ($answer -match '^[Yy]$') {
+    $startScript = Join-Path $Root "scripts\start.ps1"
+    $taskCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$startScript`""
+    schtasks /create /tn "WiFiZoneOS" /tr $taskCmd /sc onlogon /rl HIGHEST /f 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✅ Auto-start task registered (Task: WiFiZoneOS)" -ForegroundColor Green
+        Write-Host "   To remove:  schtasks /delete /tn WiFiZoneOS /f" -ForegroundColor Gray
+    } else {
+        Write-Host "⚠️  schtasks registration failed — run as Administrator to register auto-start." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "ℹ️  Skipped auto-start registration." -ForegroundColor Gray
+    Write-Host "   To register later:  schtasks /create /tn WiFiZoneOS /tr ""powershell -File scripts\start.ps1"" /sc onlogon /rl HIGHEST /f" -ForegroundColor Gray
+}
+
+# ── 6. Summary ───────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "   Installation complete!                          " -ForegroundColor Green

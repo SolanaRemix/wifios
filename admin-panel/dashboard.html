@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WiFi Zone OS — Admin Dashboard</title>
+  <!-- Chart.js for analytics graphs -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -278,7 +280,21 @@
 
       <div class="chart-container">
         <h3>📈 Hourly Revenue (last 24 h)</h3>
-        <div class="bars" id="revenueChart"></div>
+        <canvas id="revenueChart" height="120"></canvas>
+      </div>
+
+      <div class="chart-container" style="margin-top:1.5rem">
+        <h3>🖥️ System Health</h3>
+        <div id="sysHealth" style="display:flex;gap:1.5rem;flex-wrap:wrap;padding:0.5rem 0">
+          <div><span class="label" style="font-size:0.8rem;color:var(--muted)">CPU</span>
+            <div class="value" id="sys-cpu" style="font-size:1.3rem;color:var(--blue)">—</div></div>
+          <div><span class="label" style="font-size:0.8rem;color:var(--muted)">RAM</span>
+            <div class="value" id="sys-mem" style="font-size:1.3rem;color:var(--accent)">—</div></div>
+          <div><span class="label" style="font-size:0.8rem;color:var(--muted)">Disk</span>
+            <div class="value" id="sys-disk" style="font-size:1.3rem;color:var(--yellow)">—</div></div>
+          <div><span class="label" style="font-size:0.8rem;color:var(--muted)">WS clients</span>
+            <div class="value" id="ws-status" style="font-size:1.3rem;color:var(--green)">—</div></div>
+        </div>
       </div>
 
       <div class="table-wrapper">

@@ -31,5 +31,15 @@ async function tick() {
   }
 }
 
-setInterval(tick, TICK_MS);
+// Guard against overlapping ticks if a tick takes longer than TICK_MS
+let isTickRunning = false;
+
+setInterval(() => {
+  if (isTickRunning) return;
+  isTickRunning = true;
+  tick().finally(() => {
+    isTickRunning = false;
+  });
+}, TICK_MS);
+
 console.log('⏱  Session scheduler started (1 s tick)');

@@ -1,10 +1,15 @@
 'use strict';
 
 const express = require('express');
+const http = require('http');
 const session = require('express-session');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
+const { WebSocketServer, WebSocket } = require('ws');
+const si = require('systeminformation');
 
 const { db, run, get, all } = require('./db');
 const { confirmPayment, createPayment } = require('./payment');
@@ -18,6 +23,31 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ──────────────────────────────────────────────
+// Session secret – persisted so restarts don't invalidate active sessions
+// ──────────────────────────────────────────────
+const SECRET_FILE = path.join(__dirname, '..', 'config', '.session-secret');
+let SESSION_SECRET;
+if (process.env.SESSION_SECRET) {
+  SESSION_SECRET = process.env.SESSION_SECRET;
+} else if (fs.existsSync(SECRET_FILE)) {
+  SESSION_SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+} else {
+  SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.writeFileSync(SECRET_FILE, SESSION_SECRET, { mode: 0o600 });
+  } catch (_) { /* non-fatal: will regenerate on next restart */ }
+}
+
+// ──────────────────────────────────────────────
+// Normalise MAC address to lowercase colon-delimited format
+// ──────────────────────────────────────────────
+function normaliseMac(mac) {
+  return mac.toLowerCase().replace(/-/g, ':');
+}
+
+const MAC_RE = /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/;
+
+// ──────────────────────────────────────────────
 // Middleware
 // ──────────────────────────────────────────────
 app.use(express.json());
@@ -27,7 +57,7 @@ app.use('/admin', express.static(path.join(__dirname, '..', 'admin-panel')));
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || uuidv4(),
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -190,10 +220,11 @@ app.get('/users', requireAdmin, async (req, res) => {
 });
 
 app.post('/block/:mac', requireAdmin, requireCSRF, async (req, res) => {
-  const { mac } = req.params;
-  if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(mac)) {
+  const rawMac = req.params.mac;
+  if (!MAC_RE.test(rawMac)) {
     return res.status(400).json({ error: 'Invalid MAC address' });
   }
+  const mac = normaliseMac(rawMac);
   try {
     const user = await get('SELECT ip FROM users WHERE mac = ?', [mac]);
     if (user && user.ip) block(user.ip, mac);
@@ -205,10 +236,11 @@ app.post('/block/:mac', requireAdmin, requireCSRF, async (req, res) => {
 });
 
 app.post('/allow/:mac', requireAdmin, requireCSRF, async (req, res) => {
-  const { mac } = req.params;
-  if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(mac)) {
+  const rawMac = req.params.mac;
+  if (!MAC_RE.test(rawMac)) {
     return res.status(400).json({ error: 'Invalid MAC address' });
   }
+  const mac = normaliseMac(rawMac);
   try {
     allow(mac);
     await run("UPDATE users SET status = 'active' WHERE mac = ?", [mac]);
@@ -222,21 +254,19 @@ app.post('/allow/:mac', requireAdmin, requireCSRF, async (req, res) => {
 // Routes – Payments
 // ──────────────────────────────────────────────
 app.post('/pay', async (req, res) => {
-  const { amount, mac } = req.body;
+  const { amount, mac: rawMac } = req.body;
   const pricing = require('../config/pricing.json');
   const tier = pricing.rates.find((r) => r.price === Number(amount));
 
   if (!tier) return res.status(400).json({ error: 'Invalid amount' });
-  if (!mac || !/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(mac)) {
+  if (!rawMac || !MAC_RE.test(rawMac)) {
     return res.status(400).json({ error: 'Invalid MAC address' });
   }
+  const mac = normaliseMac(rawMac);
 
   try {
     const payment = createPayment(mac, amount, tier.time);
-    await run(
-      'INSERT OR IGNORE INTO users (mac) VALUES (?)',
-      [mac]
-    );
+    await run('INSERT OR IGNORE INTO users (mac) VALUES (?)', [mac]);
     await run(
       'INSERT INTO payments (ref, mac, amount, time_grant, status) VALUES (?,?,?,?,?)',
       [payment.ref, mac, amount, tier.time, 'pending']
@@ -252,12 +282,20 @@ app.post('/confirm-payment', requireAdmin, requireCSRF, async (req, res) => {
   if (!ref) return res.status(400).json({ error: 'Missing payment ref' });
 
   try {
-    const payment = await get('SELECT * FROM payments WHERE ref = ?', [ref]);
-    if (!payment) return res.status(404).json({ error: 'Payment not found' });
-    if (payment.status !== 'pending') return res.status(400).json({ error: 'Payment already processed' });
+    // Atomic status transition: only proceed if we actually changed the row
+    const result = await run(
+      "UPDATE payments SET status = 'confirmed' WHERE ref = ? AND status = 'pending'",
+      [ref]
+    );
+    if (result.changes === 0) {
+      // Either not found or already processed — check which
+      const existing = await get('SELECT status FROM payments WHERE ref = ?', [ref]);
+      if (!existing) return res.status(404).json({ error: 'Payment not found' });
+      return res.status(400).json({ error: 'Payment already processed' });
+    }
 
+    const payment = await get('SELECT * FROM payments WHERE ref = ?', [ref]);
     await confirmPayment(payment.mac, payment.time_grant);
-    await run("UPDATE payments SET status = 'confirmed' WHERE ref = ?", [ref]);
 
     const receipt = generateReceipt({
       mac: payment.mac,
@@ -304,17 +342,27 @@ app.post('/voucher/generate', requireAdmin, requireCSRF, async (req, res) => {
 });
 
 app.post('/voucher/redeem', async (req, res) => {
-  const { code, mac } = req.body;
-  if (!code || !mac) return res.status(400).json({ error: 'Missing code or MAC' });
-  if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(mac)) {
+  const { code, mac: rawMac } = req.body;
+  if (!code || !rawMac) return res.status(400).json({ error: 'Missing code or MAC' });
+  if (!MAC_RE.test(rawMac)) {
     return res.status(400).json({ error: 'Invalid MAC address' });
   }
+  const mac = normaliseMac(rawMac);
 
   try {
+    // Fetch the voucher first to get its id and time_grant
     const voucher = await get('SELECT * FROM vouchers WHERE code = ? AND used = 0', [code]);
     if (!voucher) return res.status(404).json({ error: 'Invalid or already used voucher' });
 
-    await run('UPDATE vouchers SET used = 1 WHERE id = ?', [voucher.id]);
+    // Atomic mark-as-used: only grant time if this UPDATE affects exactly 1 row
+    const result = await run(
+      'UPDATE vouchers SET used = 1 WHERE id = ? AND used = 0',
+      [voucher.id]
+    );
+    if (result.changes === 0) {
+      return res.status(409).json({ error: 'Voucher already redeemed' });
+    }
+
     await run('INSERT OR IGNORE INTO users (mac) VALUES (?)', [mac]);
     await run(
       "UPDATE users SET status = 'active', time_left = time_left + ? WHERE mac = ?",
@@ -375,6 +423,45 @@ app.get('/receipts', requireAdmin, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// Routes – System Info
+// ──────────────────────────────────────────────
+app.get('/system', requireAdmin, async (req, res) => {
+  try {
+    const [cpu, mem, disk, net] = await Promise.all([
+      si.currentLoad(),
+      si.mem(),
+      si.fsSize(),
+      si.networkStats(),
+    ]);
+    res.json({
+      cpu: {
+        load: parseFloat(cpu.currentLoad.toFixed(1)),
+      },
+      memory: {
+        total: mem.total,
+        used: mem.used,
+        free: mem.free,
+        usedPercent: parseFloat(((mem.used / mem.total) * 100).toFixed(1)),
+      },
+      disk: disk.map((d) => ({
+        fs: d.fs,
+        size: d.size,
+        used: d.used,
+        usedPercent: parseFloat(d.use.toFixed(1)),
+        mount: d.mount,
+      })),
+      network: net.map((n) => ({
+        iface: n.iface,
+        rxSec: Math.round(n.rx_sec),
+        txSec: Math.round(n.tx_sec),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ──────────────────────────────────────────────
 // Routes – Pricing
 // ──────────────────────────────────────────────
 app.get('/pricing', (req, res) => {
@@ -382,17 +469,48 @@ app.get('/pricing', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// WebSocket — live push to admin dashboard
+// ──────────────────────────────────────────────
+const httpServer = http.createServer(app);
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+
+/** Broadcast a JSON message to all connected admin WebSocket clients. */
+function broadcast(type, payload) {
+  const msg = JSON.stringify({ type, payload, ts: Date.now() });
+  for (const ws of wss.clients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  }
+}
+
+wss.on('connection', (ws) => {
+  ws.on('error', (err) => console.error('[ws] error:', err.message));
+});
+
+// Push live overview stats every 5 seconds to connected admin clients
+async function broadcastStats() {
+  if (wss.clients.size === 0) return;
+  try {
+    const stats = await getStats();
+    const users = await all('SELECT * FROM users ORDER BY created_at DESC');
+    broadcast('stats', { stats, users });
+  } catch (_) { /* non-fatal */ }
+}
+
+setInterval(broadcastStats, 5_000);
+
+module.exports = { app, broadcast };
+
+// ──────────────────────────────────────────────
 // Startup
 // ──────────────────────────────────────────────
 initDB()
   .then(() => {
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log(`🔥 WiFi Zone OS V3 running at http://localhost:${PORT}`);
+      console.log(`📡 WebSocket live feed at  ws://localhost:${PORT}/ws`);
     });
   })
   .catch((err) => {
     console.error('Failed to initialise database:', err);
     process.exit(1);
   });
-
-module.exports = app;

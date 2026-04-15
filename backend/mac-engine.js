@@ -4,19 +4,44 @@ const { exec } = require('child_process');
 const { run, get } = require('./db');
 
 /**
- * Parse ARP output (cross-platform) and upsert devices into the DB.
- * Expected line format (Windows): "  192.168.1.x  aa-bb-cc-dd-ee-ff  dynamic"
- * Expected line format (Linux):   "? (192.168.1.x) at aa:bb:cc:dd:ee:ff [ether] ..."
+ * Parse ARP output from both Windows and Unix (Linux/macOS) formats.
+ *
+ * Windows:  "  192.168.1.2          aa-bb-cc-dd-ee-ff     dynamic"
+ * Linux:    "? (192.168.1.2) at aa:bb:cc:dd:ee:ff [ether] on eth0"
+ * macOS:    "? (192.168.1.2) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]"
+ *
+ * All MACs are normalised to lowercase colon-delimited format (aa:bb:cc:dd:ee:ff).
+ * Duplicate IP+MAC pairs are deduplicated before returning.
+ *
+ * @param {string} stdout  Raw stdout from `arp -a`
+ * @returns {{ ip: string, mac: string }[]}
  */
 function parseArpOutput(stdout) {
+  const seen = new Set();
   const devices = [];
 
-  // Windows: "  192.168.1.2          aa-bb-cc-dd-ee-ff     dynamic"
+  const normalise = (mac) => mac.toLowerCase().replace(/-/g, ':');
+
+  const addDevice = (ip, mac) => {
+    const key = `${ip}|${normalise(mac)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    devices.push({ ip, mac: normalise(mac) });
+  };
+
+  // Windows: IP and MAC appear on the same line, separated by whitespace
   const winPattern = /(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5})/g;
   let match;
   while ((match = winPattern.exec(stdout)) !== null) {
-    devices.push({ ip: match[1], mac: match[2].toLowerCase().replace(/-/g, ':') });
+    addDevice(match[1], match[2]);
   }
+
+  // Unix/macOS: "(IP) at MAC"
+  const unixPattern = /\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})/g;
+  while ((match = unixPattern.exec(stdout)) !== null) {
+    addDevice(match[1], match[2]);
+  }
+
   return devices;
 }
 

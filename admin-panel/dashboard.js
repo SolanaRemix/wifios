@@ -58,7 +58,18 @@ function statusBadge(status) {
     pending:   'badge-pending',
     confirmed: 'badge-confirmed',
   };
-  return `<span class="badge ${map[status] || ''}">${status}</span>`;
+  return `<span class="badge ${map[status] || ''}">${escapeHtml(status)}</span>`;
+}
+
+/** Escape HTML special characters to prevent XSS in innerHTML. */
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function apiFetch(url, opts = {}) {
@@ -79,46 +90,139 @@ async function apiFetch(url, opts = {}) {
 }
 
 // ──────────────────────────────────────────────
+// Chart.js revenue chart (persisted across refreshes)
+// ──────────────────────────────────────────────
+let revenueChart = null;
+
+function renderRevenueChart(hourlyRevenue) {
+  const canvas = document.getElementById('revenueChart');
+  if (!canvas) return;
+  const labels  = hourlyRevenue.map((r) => r.hour || '');
+  const values  = hourlyRevenue.map((r) => r.revenue || 0);
+
+  if (revenueChart) {
+    revenueChart.data.labels = labels;
+    revenueChart.data.datasets[0].data = values;
+    revenueChart.update('none');
+    return;
+  }
+
+  revenueChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Revenue (₱)',
+        data: values,
+        backgroundColor: 'rgba(124,58,237,0.6)',
+        borderColor:     'rgba(124,58,237,1)',
+        borderWidth: 1,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+        tooltip: { callbacks: { label: (c) => ` ₱${c.raw.toFixed(2)}` } },
+      },
+      scales: {
+        x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#30363d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#30363d' }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// ──────────────────────────────────────────────
 // Overview
 // ──────────────────────────────────────────────
 async function loadOverview() {
   const res = await apiFetch('/analytics');
   if (!res) return;
   const data = await res.json();
+  applyStats(data);
+}
 
+function applyStats(data) {
   document.getElementById('st-total').textContent   = data.totalUsers;
   document.getElementById('st-active').textContent  = data.activeUsers;
   document.getElementById('st-expired').textContent = data.expiredUsers;
   document.getElementById('st-blocked').textContent = data.blockedUsers;
   document.getElementById('st-revenue').textContent = '₱' + Number(data.totalRevenue).toFixed(2);
 
-  // Chart
-  const chart = document.getElementById('revenueChart');
-  chart.innerHTML = '';
-  const maxRev = Math.max(...data.hourlyRevenue.map((r) => r.revenue), 1);
-  data.hourlyRevenue.forEach((r) => {
-    const pct = Math.round((r.revenue / maxRev) * 100);
-    chart.innerHTML += `
-      <div class="bar-wrap">
-        <div class="bar" style="height:${pct}px"></div>
-        <div class="bar-label">${r.hour || ''}</div>
-      </div>`;
-  });
-  if (!data.hourlyRevenue.length) {
-    chart.innerHTML = '<p style="color:var(--muted);font-size:0.85rem">No data yet.</p>';
-  }
+  renderRevenueChart(data.hourlyRevenue || []);
 
   // Recent payments
   const tbody = document.getElementById('recentTable');
-  tbody.innerHTML = data.recentPayments.map((p) => `
+  if (!tbody) return;
+  tbody.innerHTML = (data.recentPayments || []).map((p) => `
     <tr>
-      <td style="font-family:monospace;font-size:0.8rem">${p.ref}</td>
-      <td style="font-family:monospace">${p.mac}</td>
-      <td>₱${p.amount}</td>
+      <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(p.ref)}</td>
+      <td style="font-family:monospace">${escapeHtml(p.mac)}</td>
+      <td>₱${escapeHtml(String(p.amount))}</td>
       <td>${fmtTime(p.time_grant)}</td>
-      <td style="color:var(--muted);font-size:0.8rem">${new Date(p.created_at).toLocaleString()}</td>
+      <td style="color:var(--muted);font-size:0.8rem">${escapeHtml(new Date(p.created_at).toLocaleString())}</td>
     </tr>`).join('') || '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1rem">No payments yet</td></tr>';
 }
+
+// ──────────────────────────────────────────────
+// System Health
+// ──────────────────────────────────────────────
+async function loadSystemHealth() {
+  try {
+    const res = await apiFetch('/system');
+    if (!res || !res.ok) return;
+    const d = await res.json();
+    const cpuEl  = document.getElementById('sys-cpu');
+    const memEl  = document.getElementById('sys-mem');
+    const diskEl = document.getElementById('sys-disk');
+    if (cpuEl)  cpuEl.textContent  = d.cpu.load + '%';
+    if (memEl)  memEl.textContent  = d.memory.usedPercent + '%';
+    if (diskEl && d.disk && d.disk.length) {
+      diskEl.textContent = d.disk[0].usedPercent + '%';
+    }
+  } catch (_) { /* non-fatal */ }
+}
+
+// ──────────────────────────────────────────────
+// WebSocket — live push from server
+// ──────────────────────────────────────────────
+const wsUrl = `ws://${location.host}/ws`;
+let ws;
+const wsEl = document.getElementById('ws-status');
+
+function connectWS() {
+  ws = new WebSocket(wsUrl);
+
+  ws.addEventListener('open', () => {
+    if (wsEl) { wsEl.textContent = '🟢 Live'; wsEl.style.color = 'var(--green)'; }
+  });
+
+  ws.addEventListener('message', (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'stats') {
+        applyStats(msg.payload.stats);
+        // Also refresh devices table if it's the active page
+        const activePage = document.querySelector('.nav-item.active');
+        if (activePage && activePage.dataset.page === 'devices' && msg.payload.users) {
+          renderDevices(msg.payload.users);
+        }
+      }
+    } catch (_) {}
+  });
+
+  ws.addEventListener('close', () => {
+    if (wsEl) { wsEl.textContent = '🔴 Offline'; wsEl.style.color = 'var(--red)'; }
+    // Reconnect after 5 s
+    setTimeout(connectWS, 5000);
+  });
+
+  ws.addEventListener('error', () => ws.close());
+}
+
+connectWS();
 
 // ──────────────────────────────────────────────
 // Devices
@@ -127,20 +231,34 @@ async function loadDevices() {
   const res = await apiFetch('/users');
   if (!res) return;
   const users = await res.json();
+  renderDevices(users);
+}
+
+function renderDevices(users) {
   const tbody = document.getElementById('devicesTable');
+  if (!tbody) return;
   tbody.innerHTML = users.map((u) => `
     <tr>
-      <td style="font-family:monospace">${u.mac}</td>
-      <td>${u.ip || '—'}</td>
+      <td style="font-family:monospace">${escapeHtml(u.mac)}</td>
+      <td>${escapeHtml(u.ip || '—')}</td>
       <td>${statusBadge(u.status)}</td>
       <td>${fmtTime(u.time_left)}</td>
       <td>
-        <button class="btn btn-red"   onclick="blockDevice('${u.mac}')">🔒 Block</button>
-        <button class="btn btn-green" onclick="allowDevice('${u.mac}')">🔓 Allow</button>
+        <button class="btn btn-red"   data-action="block" data-mac="${escapeHtml(u.mac)}">🔒 Block</button>
+        <button class="btn btn-green" data-action="allow" data-mac="${escapeHtml(u.mac)}">🔓 Allow</button>
       </td>
     </tr>`).join('') ||
     '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1rem">No devices detected yet</td></tr>';
 }
+
+// Event delegation for device block/allow buttons — avoids inline onclick handlers
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const mac = btn.dataset.mac;
+  if (btn.dataset.action === 'block') blockDevice(mac);
+  if (btn.dataset.action === 'allow') allowDevice(mac);
+});
 
 async function blockDevice(mac) {
   const res = await apiFetch(`/block/${encodeURIComponent(mac)}`, { method: 'POST' });
@@ -168,12 +286,12 @@ async function loadPayments() {
   const tbody = document.getElementById('paymentsTable');
   tbody.innerHTML = payments.map((p) => `
     <tr>
-      <td style="font-family:monospace;font-size:0.8rem">${p.ref}</td>
-      <td style="font-family:monospace">${p.mac}</td>
-      <td>₱${p.amount}</td>
+      <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(p.ref)}</td>
+      <td style="font-family:monospace">${escapeHtml(p.mac)}</td>
+      <td>₱${escapeHtml(String(p.amount))}</td>
       <td>${fmtTime(p.time_grant)}</td>
       <td>${statusBadge(p.status)}</td>
-      <td style="color:var(--muted);font-size:0.8rem">${new Date(p.created_at).toLocaleString()}</td>
+      <td style="color:var(--muted);font-size:0.8rem">${escapeHtml(new Date(p.created_at).toLocaleString())}</td>
     </tr>`).join('') ||
     '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1rem">No payments yet</td></tr>';
 }
@@ -207,7 +325,7 @@ async function loadVouchers() {
   const tbody = document.getElementById('vouchersTable');
   tbody.innerHTML = vouchers.map((v) => `
     <tr>
-      <td style="font-family:monospace;font-weight:700">${v.code}</td>
+      <td style="font-family:monospace;font-weight:700">${escapeHtml(v.code)}</td>
       <td>${fmtTime(v.time_grant)}</td>
       <td>${v.used ? '<span style="color:var(--muted)">Used</span>' : '<span style="color:var(--green)">Available</span>'}</td>
       <td style="color:var(--muted);font-size:0.8rem">${new Date(v.created_at).toLocaleString()}</td>
@@ -261,11 +379,14 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 });
 
 // ──────────────────────────────────────────────
-// Auto-refresh
+// Initial load & periodic refresh (fallback when WS not connected)
 // ──────────────────────────────────────────────
-loadOverview(); // initial load
+loadOverview();
+loadSystemHealth();
 
 setInterval(() => {
   const activePage = document.querySelector('.nav-item.active');
   if (activePage) refreshPage(activePage.dataset.page);
-}, 5000);
+}, 15000); // slower poll — WS handles real-time
+
+setInterval(loadSystemHealth, 10000);

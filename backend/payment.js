@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { run } = require('./db');
 
 /**
@@ -11,7 +12,7 @@ const { run } = require('./db');
  */
 function createPayment(mac, amount, time) {
   return {
-    ref: 'PAY-' + Date.now(),
+    ref: 'PAY-' + crypto.randomUUID(),
     mac,
     amount,
     time,

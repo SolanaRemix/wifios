@@ -3,6 +3,7 @@ db/wifi.db
 db/wifi.db-shm
 db/wifi.db-wal
 .env
+config/.session-secret
 *.log
 npm-debug.log*
 .DS_Store
