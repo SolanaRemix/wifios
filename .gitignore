@@ -1,5 +1,7 @@
 node_modules/
 db/wifi.db
+db/wifi.db-shm
+db/wifi.db-wal
 .env
 *.log
 npm-debug.log*
