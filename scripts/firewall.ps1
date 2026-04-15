@@ -29,7 +29,7 @@ $ErrorActionPreference = "Stop"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-function Validate-IP ([string]$addr) {
+function Test-IPAddress ([string]$addr) {
     if ($addr -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
         throw "Invalid IP address: $addr"
     }
@@ -38,7 +38,7 @@ function Validate-IP ([string]$addr) {
     }
 }
 
-function Validate-MAC ([string]$mac) {
+function Test-MACAddress ([string]$mac) {
     if ($mac -notmatch '^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$') {
         throw "Invalid MAC address: $mac"
     }
@@ -56,8 +56,8 @@ switch ($Action) {
     "block" {
         if (-not $IP)  { throw "-IP is required for action 'block'" }
         if (-not $MAC) { throw "-MAC is required for action 'block'" }
-        Validate-IP  $IP
-        Validate-MAC $MAC
+        Test-IPAddress  $IP
+        Test-MACAddress $MAC
         $ruleName = Get-RuleName $MAC
 
         Write-Host "🚫 Blocking $IP ($MAC)..." -ForegroundColor Yellow
@@ -75,7 +75,7 @@ switch ($Action) {
 
     "allow" {
         if (-not $MAC) { throw "-MAC is required for action 'allow'" }
-        Validate-MAC $MAC
+        Test-MACAddress $MAC
         $ruleName = Get-RuleName $MAC
 
         Write-Host "✅ Allowing $MAC — removing block rule..." -ForegroundColor Green
