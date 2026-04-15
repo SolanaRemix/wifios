@@ -45,7 +45,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 ```
 
 Admin panel: **http://localhost:3000/login.html**
-Default credentials: `admin` / `admin123` (forced password change on first login)
+On first initialization, the server generates a random 24-character temporary admin password and prints it once to the terminal. Use that password to log in (username: `admin`), then change it immediately on first login.
 
 ---
 

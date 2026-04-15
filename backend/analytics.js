@@ -31,7 +31,7 @@ async function getStats() {
 
   const hourlyRevenue = await all(`
     SELECT
-      strftime('%H:00', created_at) AS hour,
+      strftime('%Y-%m-%d %H:00', created_at) AS hour,
       SUM(amount) AS revenue
     FROM payments
     WHERE status = 'confirmed'
