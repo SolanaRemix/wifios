@@ -1,0 +1,8 @@
+{
+  "rates": [
+    { "price": 10, "time": 1800,  "label": "30 minutes" },
+    { "price": 20, "time": 3600,  "label": "1 hour"     },
+    { "price": 50, "time": 10800, "label": "3 hours"    },
+    { "price": 80, "time": 86400, "label": "24 hours"   }
+  ]
+}
