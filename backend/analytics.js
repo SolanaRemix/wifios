@@ -7,7 +7,7 @@ const { all, get } = require('./db');
  * @param {object} _db  (unused — module-level db is used directly)
  * @returns {Promise<object>}
  */
-async function getStats(_db) {
+async function getStats() {
   const [
     totalUsers,
     activeUsers,

@@ -12,12 +12,4 @@ function generateVoucher(time) {
   return { code, time };
 }
 
-/**
- * Placeholder for future voucher redemption logic beyond server.js.
- * Currently redemption is handled inline in server.js for atomicity.
- */
-function redeemVoucher() {
-  // Redemption logic is handled in server.js
-}
-
-module.exports = { generateVoucher, redeemVoucher };
+module.exports = { generateVoucher };

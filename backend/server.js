@@ -8,10 +8,9 @@ const { v4: uuidv4 } = require('uuid');
 
 const { db, run, get, all } = require('./db');
 const { confirmPayment, createPayment } = require('./payment');
-const { generateVoucher, redeemVoucher } = require('./voucher');
+const { generateVoucher } = require('./voucher');
 const { generateQR } = require('./qr');
-const { getStats } = require('./analytics');
-const { generateReceipt } = require('./receipt');
+const { getStats } = require('./analytics');const { generateReceipt } = require('./receipt');
 const { block, allow } = require('./firewall');
 
 const app = express();
@@ -32,6 +31,8 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
     },
   })
@@ -334,7 +335,7 @@ app.get('/qr', async (req, res) => {
 // ──────────────────────────────────────────────
 app.get('/analytics', requireAdmin, async (req, res) => {
   try {
-    const stats = await getStats(require('./db'));
+    const stats = await getStats();
     res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });
