@@ -1,7 +1,7 @@
 'use strict';
 
 const { exec } = require('child_process');
-const { run, get } = require('./db');
+const { run } = require('./db');
 
 /**
  * Parse ARP output from both Windows and Unix (Linux/macOS) formats.

@@ -53,4 +53,23 @@ function all(sql, params = []) {
   });
 }
 
-module.exports = { db, run, get, all };
+/**
+ * Execute a function inside a SQLite transaction.
+ * Automatically commits on success and rolls back on any error.
+ * @template T
+ * @param {() => Promise<T>} fn  Async function to run inside the transaction.
+ * @returns {Promise<T>}
+ */
+async function transaction(fn) {
+  await run('BEGIN IMMEDIATE');
+  try {
+    const result = await fn();
+    await run('COMMIT');
+    return result;
+  } catch (err) {
+    await run('ROLLBACK');
+    throw err;
+  }
+}
+
+module.exports = { db, run, get, all, transaction };

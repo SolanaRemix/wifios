@@ -188,7 +188,8 @@ async function loadSystemHealth() {
 // ──────────────────────────────────────────────
 // WebSocket — live push from server
 // ──────────────────────────────────────────────
-const wsUrl = `ws://${location.host}/ws`;
+const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+const wsUrl = `${wsProtocol}://${location.host}/ws`;
 let ws;
 const wsEl = document.getElementById('ws-status');
 

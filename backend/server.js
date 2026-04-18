@@ -6,13 +6,14 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
+const { hashPassword, verifyPassword } = require('./auth');
 const { v4: uuidv4 } = require('uuid');
 const { WebSocketServer, WebSocket } = require('ws');
 const si = require('systeminformation');
 
-const { db, run, get, all } = require('./db');
-const { confirmPayment, createPayment } = require('./payment');
+const { run, get, all, transaction } = require('./db');
+const { createPayment } = require('./payment');
 const { generateVoucher } = require('./voucher');
 const { generateQR } = require('./qr');
 const { getStats } = require('./analytics');
@@ -20,7 +21,16 @@ const { generateReceipt } = require('./receipt');
 const { block, allow } = require('./firewall');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+function getPortFromEnv(portValue) {
+  if (portValue === undefined || portValue === null || portValue === '') return 3000;
+  if (!/^\d+$/.test(portValue)) throw new Error(`Invalid PORT environment variable '${portValue}': must be a valid integer`);
+  const port = Number.parseInt(portValue, 10);
+  if (port < 0 || port > 65535) throw new Error('Invalid PORT environment variable: must be between 0 and 65535');
+  return port;
+}
+
+const PORT = getPortFromEnv(process.env.PORT);
 
 // ──────────────────────────────────────────────
 // Session secret – persisted so restarts don't invalidate active sessions
@@ -55,82 +65,50 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 app.use('/admin', express.static(path.join(__dirname, '..', 'admin-panel')));
 
-app.use(
-  session({
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 8 * 60 * 60 * 1000, // 8 hours
-    },
-  })
-);
+// Store sessionMiddleware in a variable so it can be reused for WebSocket auth
+const sessionMiddleware = session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 8 * 60 * 60 * 1000, // 8 hours
+  },
+});
+
+app.use(sessionMiddleware);
 
 // ──────────────────────────────────────────────
 // DB initialisation (idempotent)
 // ──────────────────────────────────────────────
+
+/**
+ * Apply schema.sql to the database so schema changes only need to be made in one place.
+ * Strips comment lines then executes each semicolon-delimited statement.
+ */
+async function applySchemaFromFile() {
+  const schemaPath = path.join(__dirname, '..', 'db', 'schema.sql');
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+  const statements = schemaSql
+    .replace(/^\s*--.*$/gm, '')
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const statement of statements) {
+    await run(statement);
+  }
+}
+
 async function initDB() {
-  await run(`
-    CREATE TABLE IF NOT EXISTS admin (
-      id       INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      password TEXT NOT NULL,
-      first_login INTEGER NOT NULL DEFAULT 1
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id        INTEGER PRIMARY KEY AUTOINCREMENT,
-      mac       TEXT NOT NULL UNIQUE,
-      ip        TEXT,
-      time_left INTEGER NOT NULL DEFAULT 0,
-      status    TEXT NOT NULL DEFAULT 'blocked',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS payments (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      ref        TEXT NOT NULL UNIQUE,
-      mac        TEXT NOT NULL,
-      amount     REAL NOT NULL,
-      time_grant INTEGER NOT NULL,
-      status     TEXT NOT NULL DEFAULT 'pending',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS vouchers (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      code       TEXT NOT NULL UNIQUE,
-      time_grant INTEGER NOT NULL,
-      used       INTEGER NOT NULL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS receipts (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      ref        TEXT NOT NULL,
-      mac        TEXT NOT NULL,
-      amount     REAL NOT NULL,
-      time_grant INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  await applySchemaFromFile();
 
   // Seed default admin with a random temporary password
   const admin = await get('SELECT id FROM admin WHERE username = ?', ['admin']);
   if (!admin) {
-    const tempPassword = require('crypto').randomBytes(12).toString('hex');
-    const hash = await bcrypt.hash(tempPassword, 10);
+    const tempPassword = crypto.randomBytes(12).toString('hex');
+    const hash = await hashPassword(tempPassword);
     await run('INSERT INTO admin (username, password, first_login) VALUES (?,?,1)', ['admin', hash]);
     console.log('═══════════════════════════════════════════════════');
     console.log('  Default admin created.');
@@ -161,10 +139,27 @@ function requireCSRF(req, res, next) {
   next();
 }
 
+/** Rate limiter: max 5 login attempts per IP per 15 minutes. */
+const loginRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again later.' },
+});
+
+/** Custom error class for HTTP errors thrown inside route handlers. */
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.httpStatus = status;
+  }
+}
+
 // ──────────────────────────────────────────────
 // Routes – Authentication
 // ──────────────────────────────────────────────
-app.post('/login', async (req, res) => {
+app.post('/login', loginRateLimit, async (req, res) => {
   const { user, pass } = req.body;
   if (!user || !pass) return res.status(400).json({ error: 'Missing credentials' });
 
@@ -172,7 +167,7 @@ app.post('/login', async (req, res) => {
     const row = await get('SELECT * FROM admin WHERE username = ?', [user]);
     if (!row) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const match = await bcrypt.compare(pass, row.password);
+    const match = await verifyPassword(pass, row.password);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
     req.session.adminId = row.id;
@@ -194,7 +189,7 @@ app.post('/change-password', requireAdmin, requireCSRF, async (req, res) => {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
   try {
-    const hash = await bcrypt.hash(pass, 10);
+    const hash = await hashPassword(pass);
     await run('UPDATE admin SET password = ?, first_login = 0 WHERE id = ?', [hash, req.session.adminId]);
     res.json({ success: true });
   } catch (err) {
@@ -254,9 +249,10 @@ app.post('/allow/:mac', requireAdmin, requireCSRF, async (req, res) => {
 // Routes – Payments
 // ──────────────────────────────────────────────
 app.post('/pay', async (req, res) => {
-  const { amount, mac: rawMac } = req.body;
+  const { mac: rawMac } = req.body;
+  const amount = Number(req.body.amount);
   const pricing = require('../config/pricing.json');
-  const tier = pricing.rates.find((r) => r.price === Number(amount));
+  const tier = pricing.rates.find((r) => r.price === amount);
 
   if (!tier) return res.status(400).json({ error: 'Invalid amount' });
   if (!rawMac || !MAC_RE.test(rawMac)) {
@@ -282,20 +278,31 @@ app.post('/confirm-payment', requireAdmin, requireCSRF, async (req, res) => {
   if (!ref) return res.status(400).json({ error: 'Missing payment ref' });
 
   try {
-    // Atomic status transition: only proceed if we actually changed the row
-    const result = await run(
-      "UPDATE payments SET status = 'confirmed' WHERE ref = ? AND status = 'pending'",
-      [ref]
-    );
-    if (result.changes === 0) {
-      // Either not found or already processed — check which
-      const existing = await get('SELECT status FROM payments WHERE ref = ?', [ref]);
-      if (!existing) return res.status(404).json({ error: 'Payment not found' });
-      return res.status(400).json({ error: 'Payment already processed' });
-    }
+    // Wrap status update + user grant + receipt insert in one transaction so
+    // partial failures don't leave a 'confirmed' payment without granting access.
+    const payment = await transaction(async () => {
+      const result = await run(
+        "UPDATE payments SET status = 'confirmed' WHERE ref = ? AND status = 'pending'",
+        [ref]
+      );
+      if (result.changes === 0) {
+        const existing = await get('SELECT status FROM payments WHERE ref = ?', [ref]);
+        if (!existing) throw new HttpError(404, 'Payment not found');
+        throw new HttpError(400, 'Payment already processed');
+      }
 
-    const payment = await get('SELECT * FROM payments WHERE ref = ?', [ref]);
-    await confirmPayment(payment.mac, payment.time_grant);
+      const pmt = await get('SELECT * FROM payments WHERE ref = ?', [ref]);
+
+      await run(
+        "UPDATE users SET status = 'active', time_left = time_left + ? WHERE mac = ?",
+        [pmt.time_grant, pmt.mac]
+      );
+      await run(
+        'INSERT INTO receipts (ref, mac, amount, time_grant) VALUES (?,?,?,?)',
+        [pmt.ref, pmt.mac, pmt.amount, pmt.time_grant]
+      );
+      return pmt;
+    });
 
     const receipt = generateReceipt({
       mac: payment.mac,
@@ -303,14 +310,10 @@ app.post('/confirm-payment', requireAdmin, requireCSRF, async (req, res) => {
       amount: payment.amount,
       ref: payment.ref,
     });
-    await run(
-      'INSERT INTO receipts (ref, mac, amount, time_grant) VALUES (?,?,?,?)',
-      [payment.ref, payment.mac, payment.amount, payment.time_grant]
-    );
-
     allow(payment.mac);
     res.json({ success: true, receipt });
   } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -350,27 +353,32 @@ app.post('/voucher/redeem', async (req, res) => {
   const mac = normaliseMac(rawMac);
 
   try {
-    // Fetch the voucher first to get its id and time_grant
+    // Pre-check to give a clean 404 before acquiring a write lock
     const voucher = await get('SELECT * FROM vouchers WHERE code = ? AND used = 0', [code]);
     if (!voucher) return res.status(404).json({ error: 'Invalid or already used voucher' });
 
-    // Atomic mark-as-used: only grant time if this UPDATE affects exactly 1 row
-    const result = await run(
-      'UPDATE vouchers SET used = 1 WHERE id = ? AND used = 0',
-      [voucher.id]
-    );
-    if (result.changes === 0) {
-      return res.status(409).json({ error: 'Voucher already redeemed' });
-    }
+    // Wrap mark-as-used + user grant in a transaction so the voucher is never
+    // consumed without granting access (and vice versa).
+    await transaction(async () => {
+      const result = await run(
+        'UPDATE vouchers SET used = 1 WHERE id = ? AND used = 0',
+        [voucher.id]
+      );
+      if (result.changes === 0) {
+        throw new HttpError(409, 'Voucher already redeemed');
+      }
 
-    await run('INSERT OR IGNORE INTO users (mac) VALUES (?)', [mac]);
-    await run(
-      "UPDATE users SET status = 'active', time_left = time_left + ? WHERE mac = ?",
-      [voucher.time_grant, mac]
-    );
+      await run('INSERT OR IGNORE INTO users (mac) VALUES (?)', [mac]);
+      await run(
+        "UPDATE users SET status = 'active', time_left = time_left + ? WHERE mac = ?",
+        [voucher.time_grant, mac]
+      );
+    });
+
     allow(mac);
     res.json({ success: true, time_grant: voucher.time_grant });
   } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -482,8 +490,16 @@ function broadcast(type, payload) {
   }
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // Register error handler unconditionally so all connections are covered.
   ws.on('error', (err) => console.error('[ws] error:', err.message));
+
+  // Authenticate: only allow admin sessions to maintain a WebSocket connection
+  sessionMiddleware(req, {}, (err) => {
+    if (err || !req.session || !req.session.adminId) {
+      ws.close(1008, 'Unauthorized');
+    }
+  });
 });
 
 // Push live overview stats every 5 seconds to connected admin clients
@@ -491,8 +507,7 @@ async function broadcastStats() {
   if (wss.clients.size === 0) return;
   try {
     const stats = await getStats();
-    const users = await all('SELECT * FROM users ORDER BY created_at DESC');
-    broadcast('stats', { stats, users });
+    broadcast('stats', { stats });
   } catch (_) { /* non-fatal */ }
 }
 

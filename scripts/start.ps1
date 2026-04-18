@@ -8,6 +8,19 @@ param()
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 
+# ── Administrator privilege check ─────────────────────────────────────────────
+$currentIdentity  = [Security.Principal.WindowsIdentity]::GetCurrent()
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+$isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host ""
+    Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
+    Write-Host "Administrator privileges are required for DNS on port 53 and firewall operations." -ForegroundColor Red
+    Write-Host "Please restart PowerShell as Administrator and run .\scripts\start.ps1 again." -ForegroundColor Yellow
+    exit 1
+}
+
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "   WiFi Zone OS V3 — Starting...                  " -ForegroundColor Cyan

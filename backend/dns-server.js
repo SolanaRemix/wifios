@@ -5,7 +5,12 @@ const { Packet } = dns2;
 
 // IP to redirect ALL DNS queries to (your portal server)
 const REDIRECT_IP = process.env.PORTAL_IP || '192.168.1.2';
-const DNS_PORT = process.env.DNS_PORT || 53;
+
+const rawDnsPort = process.env.DNS_PORT;
+const DNS_PORT = rawDnsPort === undefined ? 53 : Number.parseInt(rawDnsPort, 10);
+if (!Number.isInteger(DNS_PORT) || DNS_PORT < 1 || DNS_PORT > 65535) {
+  throw new Error(`Invalid DNS_PORT '${rawDnsPort}': must be an integer between 1 and 65535`);
+}
 
 const server = dns2.createServer({
   udp: true,
