@@ -1,0 +1,19 @@
+{
+  "portalIP": "192.168.1.2",
+  "portalPort": 3000,
+  "dnsPort": 53,
+  "tickIntervalMs": 1000,
+  "arpScanIntervalMs": 10000,
+  "sessionMaxAgeMs": 28800000,
+  "timezone": "Asia/Manila",
+  "businessName": "WiFi Zone",
+  "currency": "₱",
+  "autoStartOnBoot": false,
+  "mikrotikEnabled": false,
+  "mikrotik": {
+    "host": "",
+    "user": "admin",
+    "password": "",
+    "hotspotServer": "hotspot1"
+  }
+}

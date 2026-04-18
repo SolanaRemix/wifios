@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WiFi Zone — Buy Access</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(160deg, #0ea5e9 0%, #2563eb 100%);
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #fff;
+      padding: 1rem;
+    }
+
+    header { text-align: center; margin-bottom: 2rem; }
+    header .icon { font-size: 3rem; }
+    header h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: 1px; margin-top: 0.4rem; }
+    header p  { font-size: 0.9rem; opacity: 0.85; margin-top: 0.3rem; }
+
+    .plans {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .plan {
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 14px;
+      padding: 1.4rem 1.6rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-width: 130px;
+    }
+    .plan:hover, .plan.selected {
+      background: rgba(255,255,255,0.3);
+      border-color: #fff;
+      transform: translateY(-3px);
+    }
+    .plan .price { font-size: 2rem; font-weight: 800; }
+    .plan .label { font-size: 0.85rem; opacity: 0.9; margin-top: 0.2rem; }
+
+    .mac-section {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 12px;
+      padding: 1.2rem;
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 1.2rem;
+    }
+    .mac-section label { font-size: 0.8rem; opacity: 0.8; display: block; margin-bottom: 0.4rem; }
+    .mac-section input {
+      width: 100%;
+      padding: 0.65rem 0.9rem;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    .mac-section input::placeholder { color: rgba(255,255,255,0.5); }
+
+    .voucher-section {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 12px;
+      padding: 1.2rem;
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 1.2rem;
+    }
+    .voucher-section h3 { font-size: 0.9rem; margin-bottom: 0.8rem; opacity: 0.9; }
+    .voucher-row { display: flex; gap: 0.6rem; }
+    .voucher-row input {
+      flex: 1;
+      padding: 0.65rem 0.9rem;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .voucher-row input::placeholder { color: rgba(255,255,255,0.5); }
+    .voucher-row button {
+      padding: 0.65rem 1rem;
+      background: rgba(255,255,255,0.25);
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .buy-btn {
+      width: 100%;
+      max-width: 420px;
+      padding: 1rem;
+      background: #fff;
+      color: #2563eb;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      margin-bottom: 1rem;
+    }
+    .buy-btn:hover { opacity: 0.9; }
+    .buy-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status-box {
+      width: 100%;
+      max-width: 420px;
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+      display: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      white-space: pre-line;
+    }
+    .status-box.info    { background: rgba(255,255,255,0.15); display: block; }
+    .status-box.success { background: rgba(34,197,94,0.25); border: 1px solid #86efac; display: block; }
+    .status-box.error   { background: rgba(239,68,68,0.25); border: 1px solid #fca5a5; display: block; }
+
+    .timer {
+      font-size: 2.5rem;
+      font-weight: 800;
+      text-align: center;
+      margin: 1.5rem 0;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="icon">📶</div>
+    <h1>WiFi Zone</h1>
+    <p>Select a plan to get connected</p>
+  </header>
+
+  <!-- Pricing plans (loaded dynamically) -->
+  <div class="plans" id="plans"></div>
+
+  <!-- MAC address field -->
+  <div class="mac-section">
+    <label for="macInput">Your Device MAC Address</label>
+    <input id="macInput" placeholder="aa:bb:cc:dd:ee:ff" maxlength="17" />
+  </div>
+
+  <!-- Pay button -->
+  <button class="buy-btn" id="buyBtn" disabled>Select a plan</button>
+
+  <!-- Voucher section -->
+  <div class="voucher-section">
+    <h3>🎟 Have a voucher?</h3>
+    <div class="voucher-row">
+      <input id="voucherCode" placeholder="WIFI-XXXXXX" />
+      <button id="redeemBtn">Redeem</button>
+    </div>
+  </div>
+
+  <!-- Status / feedback -->
+  <div class="status-box" id="statusBox"></div>
+
+  <!-- Live session timer (shown after access granted) -->
+  <div class="timer" id="timer"></div>
+
+  <script>
+    let selectedPlan = null;
+    let sessionInterval = null;
+
+    // Load pricing from server
+    async function loadPlans() {
+      const res = await fetch('/pricing');
+      const { rates } = await res.json();
+      const container = document.getElementById('plans');
+      rates.forEach((r) => {
+        const div = document.createElement('div');
+        div.className = 'plan';
+        div.dataset.price = r.price;
+        div.dataset.time  = r.time;
+        div.innerHTML = `
+          <div class="price">₱${r.price}</div>
+          <div class="label">${formatTime(r.time)}</div>`;
+        div.addEventListener('click', () => selectPlan(r, div));
+        container.appendChild(div);
+      });
+    }
+
+    function selectPlan(plan, el) {
+      document.querySelectorAll('.plan').forEach((p) => p.classList.remove('selected'));
+      el.classList.add('selected');
+      selectedPlan = plan;
+      const btn = document.getElementById('buyBtn');
+      btn.disabled = false;
+      btn.textContent = `Buy ₱${plan.price} — ${formatTime(plan.time)}`;
+    }
+
+    function formatTime(seconds) {
+      if (seconds >= 3600) return (seconds / 3600) + ' hr';
+      return (seconds / 60) + ' min';
+    }
+
+    document.getElementById('buyBtn').addEventListener('click', async () => {
+      if (!selectedPlan) return;
+      const mac = document.getElementById('macInput').value.trim();
+      if (!/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac)) {
+        showStatus('Please enter a valid MAC address (e.g. aa:bb:cc:dd:ee:ff)', 'error');
+        return;
+      }
+      document.getElementById('buyBtn').disabled = true;
+      const res = await fetch('/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: selectedPlan.price, mac }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showStatus(`✅ Payment pending (Ref: ${data.ref})\nWaiting for admin confirmation…`, 'info');
+      } else {
+        showStatus(data.error || 'Payment failed.', 'error');
+        document.getElementById('buyBtn').disabled = false;
+      }
+    });
+
+    document.getElementById('redeemBtn').addEventListener('click', async () => {
+      const code = document.getElementById('voucherCode').value.trim().toUpperCase();
+      const mac  = document.getElementById('macInput').value.trim();
+      if (!code) { showStatus('Enter a voucher code.', 'error'); return; }
+      if (!/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac)) {
+        showStatus('Please enter a valid MAC address first.', 'error');
+        return;
+      }
+      const res = await fetch('/voucher/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, mac }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showStatus(`🎉 Voucher redeemed! You have ${formatTime(data.time_grant)} of access.`, 'success');
+        startTimer(data.time_grant);
+      } else {
+        showStatus(data.error || 'Redemption failed.', 'error');
+      }
+    });
+
+    function showStatus(msg, type) {
+      const box = document.getElementById('statusBox');
+      box.textContent = msg;
+      box.className = 'status-box ' + type;
+    }
+
+    function startTimer(seconds) {
+      const timerEl = document.getElementById('timer');
+      timerEl.style.display = 'block';
+      let remaining = seconds;
+      // Clear any existing timer before starting a new one
+      if (sessionInterval) {
+        clearInterval(sessionInterval);
+        sessionInterval = null;
+      }
+      const update = () => {
+        const h = Math.floor(remaining / 3600);
+        const m = Math.floor((remaining % 3600) / 60);
+        const s = remaining % 60;
+        timerEl.textContent =
+          `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        if (remaining <= 0) {
+          clearInterval(sessionInterval);
+          sessionInterval = null;
+          timerEl.textContent = '00:00:00';
+          showStatus('⏱ Your session has expired.', 'error');
+        }
+        remaining--;
+      };
+      update();
+      sessionInterval = setInterval(update, 1000);
+    }
+
+    loadPlans();
+  </script>
+</body>
+</html>
