@@ -326,7 +326,7 @@ Environment variables (optional):
 | `PORT` | `3000` | HTTP server port |
 | `PORTAL_IP` | `192.168.1.2` | IP DNS redirects all queries to |
 | `DNS_PORT` | `53` | DNS server port |
-| `SESSION_SECRET` | random UUID | Session signing secret |
+| `SESSION_SECRET` | auto-generated 64-char hex string | Session signing secret, persisted to `config/.session-secret` |
 
 ---
 

@@ -205,18 +205,19 @@ function connectWS() {
       const msg = JSON.parse(event.data);
       if (msg.type === 'stats') {
         applyStats(msg.payload.stats);
-        // Also refresh devices table if it's the active page
-        const activePage = document.querySelector('.nav-item.active');
-        if (activePage && activePage.dataset.page === 'devices' && msg.payload.users) {
-          renderDevices(msg.payload.users);
-        }
       }
     } catch (_) {}
   });
 
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', (event) => {
     if (wsEl) { wsEl.textContent = '🔴 Offline'; wsEl.style.color = 'var(--red)'; }
-    // Reconnect after 5 s
+    // If the server closed with 1008 (unauthorized), the admin session has
+    // expired — redirect to login instead of looping.
+    if (event.code === 1008) {
+      window.location.assign('/login.html');
+      return;
+    }
+    // Reconnect after 5 s for all other close reasons
     setTimeout(connectWS, 5000);
   });
 

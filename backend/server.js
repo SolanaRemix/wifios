@@ -224,6 +224,7 @@ app.post('/block/:mac', requireAdmin, requireCSRF, async (req, res) => {
     const user = await get('SELECT ip FROM users WHERE mac = ?', [mac]);
     if (user && user.ip) block(user.ip, mac);
     await run("UPDATE users SET status = 'blocked', time_left = 0 WHERE mac = ?", [mac]);
+    broadcast('device-blocked', { mac });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -239,6 +240,7 @@ app.post('/allow/:mac', requireAdmin, requireCSRF, async (req, res) => {
   try {
     allow(mac);
     await run("UPDATE users SET status = 'active' WHERE mac = ?", [mac]);
+    broadcast('device-allowed', { mac });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -311,6 +313,7 @@ app.post('/confirm-payment', requireAdmin, requireCSRF, async (req, res) => {
       ref: payment.ref,
     });
     allow(payment.mac);
+    broadcast('payment-confirmed', { ref: payment.ref, mac: payment.mac });
     res.json({ success: true, receipt });
   } catch (err) {
     if (err.httpStatus) return res.status(err.httpStatus).json({ error: err.message });
@@ -376,6 +379,7 @@ app.post('/voucher/redeem', async (req, res) => {
     });
 
     allow(mac);
+    broadcast('voucher-redeemed', { mac });
     res.json({ success: true, time_grant: voucher.time_grant });
   } catch (err) {
     if (err.httpStatus) return res.status(err.httpStatus).json({ error: err.message });
@@ -395,10 +399,14 @@ app.get('/vouchers', requireAdmin, async (req, res) => {
 // ──────────────────────────────────────────────
 // Routes – QR Code
 // ──────────────────────────────────────────────
-app.get('/qr', async (req, res) => {
+app.get('/qr', requireAdmin, async (req, res) => {
   try {
-    const host = req.headers.host || `localhost:${PORT}`;
-    const url = `http://${host}/`;
+    // Build the portal URL from trusted config/env rather than the user-controlled
+    // Host header to prevent open-redirect / spoofed QR codes.
+    const sysConfig = (() => { try { return require('../config/system.json'); } catch (_) { return {}; } })();
+    const baseUrl = process.env.PORTAL_PUBLIC_URL
+      || (sysConfig.portalIP ? `http://${sysConfig.portalIP}` : `http://localhost:${PORT}`);
+    const url = new URL('/', baseUrl).toString();
     const dataUrl = await generateQR(url);
     res.json({ qr: dataUrl, url });
   } catch (err) {
@@ -482,15 +490,19 @@ app.get('/pricing', (req, res) => {
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
-/** Broadcast a JSON message to all connected admin WebSocket clients. */
+/** Broadcast a JSON message to all authenticated admin WebSocket clients. */
 function broadcast(type, payload) {
   const msg = JSON.stringify({ type, payload, ts: Date.now() });
   for (const ws of wss.clients) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+    if (ws.readyState === WebSocket.OPEN && ws.isAuthed) ws.send(msg);
   }
 }
 
 wss.on('connection', (ws, req) => {
+  // Mark socket as unauthenticated by default so broadcast() skips it
+  // until session validation completes successfully.
+  ws.isAuthed = false;
+
   // Register error handler unconditionally so all connections are covered.
   ws.on('error', (err) => console.error('[ws] error:', err.message));
 
@@ -498,6 +510,8 @@ wss.on('connection', (ws, req) => {
   sessionMiddleware(req, {}, (err) => {
     if (err || !req.session || !req.session.adminId) {
       ws.close(1008, 'Unauthorized');
+    } else {
+      ws.isAuthed = true;
     }
   });
 });

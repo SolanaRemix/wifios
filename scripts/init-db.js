@@ -3,8 +3,9 @@
 
 /**
  * Standalone DB initialisation script.
- * Runs the server's built-in initDB() routine so the schema is applied and
- * the default admin row is seeded before the server is started.
+ * Applies the schema SQL and seeds the default admin row before the server
+ * is started for the first time. Does NOT import server.js — schema is applied
+ * directly from db/schema.sql to avoid circular dependencies.
  *
  * Usage:  node scripts/init-db.js
  *         npm run init-db

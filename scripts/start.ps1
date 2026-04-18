@@ -76,14 +76,14 @@ try {
     Write-Host "  Scheduler  PID: $($scheduler.Id)" -ForegroundColor Gray
     Write-Host "  MAC Engine PID: $($macEngine.Id)" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "Press Ctrl+C or close this window to stop all services." -ForegroundColor Gray
+    Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Gray
+    Write-Host "Closing this PowerShell window may leave child processes running." -ForegroundColor Yellow
 
     # Wait for all child processes — script blocks until every service exits
     Wait-Process -Id ($processes | ForEach-Object { $_.Id }) -ErrorAction SilentlyContinue
 }
 finally {
-    # Always stop every child process, whether this block exits normally,
-    # via Ctrl+C, an unhandled error, or the console window closing.
+    # Always stop every child process when the script exits normally or via Ctrl+C.
     foreach ($proc in $processes) {
         try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
     }
