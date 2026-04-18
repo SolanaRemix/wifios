@@ -16,7 +16,7 @@ const path = require('path');
 process.chdir(path.join(__dirname, '..'));
 
 const { db, run, get } = require('../backend/db');
-const bcrypt = require('bcrypt');
+const { hashPassword } = require('../backend/auth');
 const crypto = require('crypto');
 const fs = require('fs');
 
@@ -38,7 +38,7 @@ async function init() {
   const admin = await get('SELECT id FROM admin WHERE username = ?', ['admin']);
   if (!admin) {
     const tempPassword = crypto.randomBytes(12).toString('hex');
-    const hash = await bcrypt.hash(tempPassword, 10);
+    const hash = await hashPassword(tempPassword);
     await run('INSERT INTO admin (username, password, first_login) VALUES (?,?,1)', ['admin', hash]);
     // Intentionally print the one-time temp password to the terminal so the operator
     // can log in and change it. It is never written to disk or any log file.

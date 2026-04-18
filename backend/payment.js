@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('crypto');
-const { run } = require('./db');
 
 /**
  * Build a pending payment object (not yet saved — server.js persists it).
@@ -20,16 +19,4 @@ function createPayment(mac, amount, time) {
   };
 }
 
-/**
- * Activate a user session after payment is confirmed.
- * @param {string} mac   Device MAC address
- * @param {number} time  Access time in seconds to add
- */
-async function confirmPayment(mac, time) {
-  await run(
-    "UPDATE users SET status = 'active', time_left = time_left + ? WHERE mac = ?",
-    [time, mac]
-  );
-}
-
-module.exports = { createPayment, confirmPayment };
+module.exports = { createPayment };

@@ -336,7 +336,7 @@ Environment variables (optional):
 |---|---|---|---|
 | POST | `/login` | — | Admin login |
 | POST | `/change-password` | yes | Change admin password |
-| POST | `/logout` | yes | End session |
+| POST | `/logout` | — | End session |
 | GET | `/users` | yes | List all devices |
 | POST | `/block/:mac` | yes | Block a device |
 | POST | `/allow/:mac` | yes | Allow a device |
@@ -346,7 +346,7 @@ Environment variables (optional):
 | POST | `/voucher/generate` | yes | Create a voucher |
 | POST | `/voucher/redeem` | — | Redeem a voucher |
 | GET | `/vouchers` | yes | List all vouchers |
-| GET | `/qr` | — | Get portal QR code |
+| GET | `/qr` | yes | Get portal QR code |
 | GET | `/analytics` | yes | Get dashboard stats |
 | GET | `/receipts` | yes | List all receipts |
 | GET | `/pricing` | — | Get pricing config |

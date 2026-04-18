@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- Payment records
 CREATE TABLE IF NOT EXISTS payments (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  ref        TEXT    NOT NULL UNIQUE,    -- PAY-<timestamp>
+  ref        TEXT    NOT NULL UNIQUE,    -- PAY-<uuid> (e.g. PAY-550e8400-e29b-41d4-a716-446655440000)
   mac        TEXT    NOT NULL,
   amount     REAL    NOT NULL,           -- ₱ amount
   time_grant INTEGER NOT NULL,           -- seconds of access granted
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS payments (
 -- Voucher codes
 CREATE TABLE IF NOT EXISTS vouchers (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  code       TEXT    NOT NULL UNIQUE,    -- WIFI-XXXXXX
+  code       TEXT    NOT NULL UNIQUE,    -- WIFI-XXXXXXXX (8 uppercase hex chars, e.g. WIFI-A3F7B2C9)
   time_grant INTEGER NOT NULL,           -- seconds of access
   used       INTEGER NOT NULL DEFAULT 0, -- 0 = available, 1 = redeemed
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
