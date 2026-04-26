@@ -244,12 +244,13 @@ mod tests {
 
     #[test]
     fn valid_dns_response_detection_nxdomain() {
-        // Build a minimal NXDOMAIN response (RCODE=3, QR=1, ANCOUNT=0)
+        // Build a minimal NXDOMAIN response (RCODE=3, QR=1, QDCOUNT=1, ANCOUNT=0)
         let tx_id: u16 = 0x1234;
         let mut buf = vec![0u8; 12];
         buf[0] = 0x12; buf[1] = 0x34;    // ID
         buf[2] = 0x81; buf[3] = 0x83;    // QR=1, RD=1, RA=1, RCODE=3 (NXDOMAIN)
-        buf[4] = 0x00; buf[5] = 0x00;    // ANCOUNT = 0
+        buf[4] = 0x00; buf[5] = 0x01;    // QDCOUNT = 1
+        buf[6] = 0x00; buf[7] = 0x00;    // ANCOUNT = 0
         assert!(is_valid_dns_response(&buf, tx_id));
     }
 

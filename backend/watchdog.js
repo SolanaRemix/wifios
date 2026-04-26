@@ -56,16 +56,21 @@ async function probeDns() {
 
   // dns.promises.Resolver does not apply the timeout from its constructor
   // options, so we bound the probe duration explicitly with Promise.race.
+  // The timeout handle is cleared in the finally block to avoid keeping the
+  // event loop alive after a successful probe.
   const probePromise = resolver.resolve4(PROBE_DOMAIN);
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('DNS probe timeout')), DNS_TIMEOUT_MS)
-  );
+  let timeoutHandle = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error('DNS probe timeout')), DNS_TIMEOUT_MS);
+  });
 
   try {
     await Promise.race([probePromise, timeoutPromise]);
     return true;
   } catch (_) {
     return false;
+  } finally {
+    if (timeoutHandle !== null) clearTimeout(timeoutHandle);
   }
 }
 

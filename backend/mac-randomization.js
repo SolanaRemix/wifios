@@ -99,8 +99,10 @@ async function markRandomized(mac, isRandomized) {
  * than STALE_THRESHOLD_SECS.  Only removes 'expired' and 'blocked' entries to
  * avoid touching active sessions.
  *
- * The threshold timestamp is computed once so SQLite can use the index on
- * `updated_at` rather than evaluating a per-row expression.
+ * The threshold timestamp is computed once so the query compares `updated_at`
+ * against a single precomputed value instead of evaluating a per-row
+ * expression in SQLite.  The composite index on (is_randomized, status, updated_at)
+ * in schema.sql enables this query to avoid a full table scan.
  *
  * @returns {Promise<number>} Number of rows removed.
  */

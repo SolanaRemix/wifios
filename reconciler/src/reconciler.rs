@@ -15,13 +15,14 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use log::{info, warn, error, debug};
 
-/// Live session row returned by GET /users.
+/// Live session row returned by GET /internal/users.
 #[derive(Debug, Deserialize)]
 struct LiveSession {
-    mac:       String,
-    ip:        Option<String>,
-    status:    String,
-    time_left: i64,
+    mac:          String,
+    ip:           Option<String>,
+    status:       String,
+    time_left:    i64,
+    is_randomized: Option<i64>, // 1 = locally-administered MAC; None on older schemas
 }
 
 pub struct Reconciler {
@@ -214,7 +215,7 @@ impl Reconciler {
                         ip:           live_entry.ip.clone(),
                         status:       live_entry.status.clone(),
                         time_left:    live_entry.time_left,
-                        is_randomized: false,
+                        is_randomized: live_entry.is_randomized.unwrap_or(0) != 0,
                         last_seen:    now_secs(),
                     },
                 );

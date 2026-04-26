@@ -559,26 +559,6 @@ MIT — see [LICENSE](LICENSE)
 
 ---
 
-## Architecture
-
-```
-[ User Phone ]
-     down  (QR Scan)
-[ User Portal  — http://192.168.1.2:3000/portal.html ]
-     down
-[ WiFi Zone OS V3  (Windows PC / Mini PC) ]
-  |- Express HTTP Server  (port 3000)
-  |- DNS Captive Portal   (port 53)
-  |- MAC Engine           (arp scan)
-  +- Session Scheduler    (1 s tick)
-     down
-[ Windows Firewall  — block / allow per device ]
-     down
-[ Internet  (Starlink) ]
-```
-
----
-
 ## Quick Start (Windows)
 
 ```powershell

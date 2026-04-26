@@ -1,6 +1,6 @@
 // config.rs — Configuration loader for wifios-reconciler
 //
-// Reads config.toml from the same directory as the binary, or from the path
+// Reads config.toml from the current working directory, or from the path
 // specified by the RECONCILER_CONFIG env var.
 
 use serde::Deserialize;

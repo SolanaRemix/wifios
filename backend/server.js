@@ -6,7 +6,6 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
 const rateLimit = require('express-rate-limit');
 const { hashPassword, verifyPassword } = require('./auth');
 const { v4: uuidv4 } = require('uuid');
@@ -54,20 +53,45 @@ function spawnDnsServer() {
 
 /**
  * Kill the current DNS child (if any) and spawn a fresh one.
- * Used by the watchdog and the /internal/restart-portal endpoint.
+ * Waits for the old process to fully exit before binding the new one so
+ * port 53 is reliably free (avoids EADDRINUSE on fast restarts).
  * @returns {Promise<void>}
  */
 function restartDnsChildProcess() {
-  return new Promise((resolve) => {
-    if (_dnsChildProc) {
-      _dnsChildProc.kill('SIGTERM');
-      _dnsChildProc = null;
+  return new Promise((resolve, reject) => {
+    const oldProc = _dnsChildProc;
+    _dnsChildProc = null;
+
+    const spawn = () => {
+      try {
+        _dnsChildProc = spawnDnsServer();
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    };
+
+    if (!oldProc) {
+      spawn();
+      return;
     }
-    // Brief pause to let the OS reclaim port 53 before re-binding.
-    setTimeout(() => {
-      _dnsChildProc = spawnDnsServer();
-      resolve();
-    }, 300);
+
+    // Wait for the old child to actually exit (with a 3 s timeout fallback).
+    let exited = false;
+    const timeout = setTimeout(() => {
+      if (!exited) {
+        console.warn('[server] dns-server did not exit within 3s — proceeding anyway');
+        spawn();
+      }
+    }, 3000);
+
+    oldProc.once('exit', () => {
+      exited = true;
+      clearTimeout(timeout);
+      spawn();
+    });
+
+    oldProc.kill('SIGTERM');
   });
 }
 
@@ -152,20 +176,39 @@ async function applySchemaFromFile() {
   }
 }
 
-async function initDB() {
-  await applySchemaFromFile();
+/**
+ * Returns true for the SQLite "duplicate column name" error thrown when an
+ * ALTER TABLE tries to add a column that already exists.
+ */
+function isDuplicateColumnError(err) {
+  return Boolean(
+    err &&
+    typeof err.message === 'string' &&
+    err.message.toLowerCase().includes('duplicate column name')
+  );
+}
 
-  // Migrate existing databases: add columns introduced in later schema versions.
-  // These ALTER TABLE statements are safe to run multiple times because we
-  // catch the "duplicate column" error and continue.
+async function initDB() {
+  // Run column migrations BEFORE applySchemaFromFile so that new indexes
+  // referencing those columns (e.g. idx_users_randomized, idx_users_ip) can
+  // be applied against an existing DB without "no such column" errors.
   const migrations = [
     "ALTER TABLE users ADD COLUMN is_randomized INTEGER NOT NULL DEFAULT 0",
     // NOT NULL with a DEFAULT means SQLite fills existing rows on ALTER TABLE.
     "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
   ];
   for (const stmt of migrations) {
-    try { await run(stmt); } catch (_) { /* column already exists — skip */ }
+    try {
+      await run(stmt);
+    } catch (err) {
+      if (!isDuplicateColumnError(err)) throw err; // re-throw unexpected errors
+      /* column already exists — skip */
+    }
   }
+
+  // Apply the full schema (CREATE TABLE IF NOT EXISTS, indexes, etc.).
+  // Column additions above ensure all columns exist before indexes are created.
+  await applySchemaFromFile();
 
   // Back-fill any NULL updated_at values that may exist from the nullable version.
   await run(`UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
