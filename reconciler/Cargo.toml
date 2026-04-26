@@ -1,0 +1,39 @@
+[package]
+name = "wifios-reconciler"
+version = "0.1.0"
+edition = "2021"
+description = "State reconciliation daemon for WiFi Zone OS — atomic persistence, startup recovery, DNS watchdog"
+authors = ["WiFi Zone OS"]
+license = "MIT"
+
+[[bin]]
+name = "wifios-reconciler"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime — minimal features to reduce binary size on MIPS/ARM
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "io-util", "sync", "macros", "signal", "rt"] }
+# JSON state serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Structured logging
+log = "0.4"
+env_logger = "0.11"
+# TOML config file parsing
+toml = "0.8"
+# HTTP client (lightweight) for portal health check — json feature required for .json() / resp.json()
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+# Error handling helpers
+anyhow = "1"
+
+[dev-dependencies]
+# Temporary directories for Rust unit tests
+tempfile = "3"
+
+[profile.release]
+# Optimise for size on MIPS/ARM routers
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

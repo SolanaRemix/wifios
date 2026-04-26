@@ -14,12 +14,14 @@ CREATE TABLE IF NOT EXISTS admin (
 
 -- Connected devices / users
 CREATE TABLE IF NOT EXISTS users (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  mac        TEXT    NOT NULL UNIQUE,    -- lowercase colon-separated
-  ip         TEXT,                        -- last seen IP
-  time_left  INTEGER NOT NULL DEFAULT 0, -- seconds remaining
-  status     TEXT    NOT NULL DEFAULT 'blocked', -- active | blocked | expired
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  mac           TEXT    NOT NULL UNIQUE,    -- lowercase colon-separated
+  ip            TEXT,                        -- last seen IP
+  time_left     INTEGER NOT NULL DEFAULT 0, -- seconds remaining
+  status        TEXT    NOT NULL DEFAULT 'blocked', -- active | blocked | expired
+  is_randomized INTEGER NOT NULL DEFAULT 0, -- 1 = locally-administered (randomized) MAC
+  updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Payment records
@@ -53,8 +55,11 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 
 -- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_users_mac        ON users (mac);
-CREATE INDEX IF NOT EXISTS idx_users_status     ON users (status);
-CREATE INDEX IF NOT EXISTS idx_payments_ref     ON payments (ref);
-CREATE INDEX IF NOT EXISTS idx_payments_status  ON payments (status);
-CREATE INDEX IF NOT EXISTS idx_vouchers_code    ON vouchers (code);
+CREATE INDEX IF NOT EXISTS idx_users_mac                              ON users (mac);
+CREATE INDEX IF NOT EXISTS idx_users_status                           ON users (status);
+CREATE INDEX IF NOT EXISTS idx_users_ip                               ON users (ip);
+CREATE INDEX IF NOT EXISTS idx_users_randomized                       ON users (is_randomized);
+CREATE INDEX IF NOT EXISTS idx_users_randomized_status_updated_at     ON users (is_randomized, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_payments_ref                           ON payments (ref);
+CREATE INDEX IF NOT EXISTS idx_payments_status                        ON payments (status);
+CREATE INDEX IF NOT EXISTS idx_vouchers_code                          ON vouchers (code);

@@ -19,6 +19,81 @@ const { generateQR } = require('./qr');
 const { getStats } = require('./analytics');
 const { generateReceipt } = require('./receipt');
 const { block, allow } = require('./firewall');
+const { applyTuning } = require('./network-tuning');
+const watchdog = require('./watchdog');
+
+// ──────────────────────────────────────────────
+// DNS child process management
+//
+// When DNS_SERVER_MODE=child, server.js spawns dns-server.js as a managed
+// child process so the watchdog can actually restart it on DNS failure.
+// When DNS_SERVER_MODE is unset or 'external', the DNS server is expected to
+// be started and supervised by an external script (e.g. start.ps1), and the
+// Node watchdog will warn that it cannot restart it.
+// ──────────────────────────────────────────────
+const DNS_SERVER_MODE = process.env.DNS_SERVER_MODE || 'external';
+let _dnsChildProc = null;
+
+function spawnDnsServer() {
+  const dnsPath = path.join(__dirname, 'dns-server.js');
+  const child = require('child_process').fork(dnsPath, [], {
+    env: { ...process.env },
+    silent: false,
+  });
+  child.on('exit', (code, signal) => {
+    console.warn(`[server] dns-server exited (code=${code}, signal=${signal})`);
+    _dnsChildProc = null;
+  });
+  child.on('error', (err) => {
+    console.error('[server] dns-server process error:', err.message);
+  });
+  console.log(`[server] dns-server spawned (pid=${child.pid})`);
+  return child;
+}
+
+/**
+ * Kill the current DNS child (if any) and spawn a fresh one.
+ * Waits for the old process to fully exit before binding the new one so
+ * port 53 is reliably free (avoids EADDRINUSE on fast restarts).
+ * @returns {Promise<void>}
+ */
+function restartDnsChildProcess() {
+  return new Promise((resolve, reject) => {
+    const oldProc = _dnsChildProc;
+    _dnsChildProc = null;
+
+    const spawn = () => {
+      try {
+        _dnsChildProc = spawnDnsServer();
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    };
+
+    if (!oldProc) {
+      spawn();
+      return;
+    }
+
+    // Wait for the old child to actually exit (with a 3 s timeout fallback).
+    let exited = false;
+    const timeout = setTimeout(() => {
+      if (!exited) {
+        console.warn('[server] dns-server did not exit within 3s — proceeding anyway');
+        spawn();
+      }
+    }, 3000);
+
+    oldProc.once('exit', () => {
+      exited = true;
+      clearTimeout(timeout);
+      spawn();
+    });
+
+    oldProc.kill('SIGTERM');
+  });
+}
 
 const app = express();
 
@@ -101,8 +176,56 @@ async function applySchemaFromFile() {
   }
 }
 
+/**
+ * Returns true for the SQLite "duplicate column name" error thrown when an
+ * ALTER TABLE tries to add a column that already exists.
+ */
+function isDuplicateColumnError(err) {
+  return Boolean(
+    err &&
+    typeof err.message === 'string' &&
+    err.message.toLowerCase().includes('duplicate column name')
+  );
+}
+
 async function initDB() {
+  // Run column migrations BEFORE applySchemaFromFile so that new indexes
+  // referencing those columns (e.g. idx_users_randomized, idx_users_ip) can
+  // be applied against an existing DB without "no such column" errors.
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN is_randomized INTEGER NOT NULL DEFAULT 0",
+    // NOT NULL with a DEFAULT means SQLite fills existing rows on ALTER TABLE.
+    "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+  ];
+  for (const stmt of migrations) {
+    try {
+      await run(stmt);
+    } catch (err) {
+      if (!isDuplicateColumnError(err)) throw err; // re-throw unexpected errors
+      /* column already exists — skip */
+    }
+  }
+
+  // Apply the full schema (CREATE TABLE IF NOT EXISTS, indexes, etc.).
+  // Column additions above ensure all columns exist before indexes are created.
   await applySchemaFromFile();
+
+  // Back-fill any NULL updated_at values that may exist from the nullable version.
+  await run(`UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  // Install/replace a trigger so every UPDATE to a users row automatically
+  // refreshes updated_at — this keeps the MAC pruning logic accurate without
+  // requiring every UPDATE statement to explicitly set the column.
+  await run('DROP TRIGGER IF EXISTS users_set_updated_at');
+  await run(`
+    CREATE TRIGGER users_set_updated_at
+    AFTER UPDATE ON users
+    FOR EACH ROW
+    WHEN COALESCE(NEW.updated_at, '') = COALESCE(OLD.updated_at, '')
+    BEGIN
+      UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+    END
+  `);
 
   // Seed default admin with a random temporary password
   const admin = await get('SELECT id FROM admin WHERE username = ?', ['admin']);
@@ -137,6 +260,19 @@ function requireCSRF(req, res, next) {
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }
   next();
+}
+
+/**
+ * Middleware that restricts a route to requests originating from localhost.
+ * Used for internal endpoints consumed by the Rust reconciler and watchdog;
+ * these bypass admin session + CSRF checks but are not exposed externally.
+ */
+function requireLocalhost(req, res, next) {
+  const addr = req.socket.remoteAddress || '';
+  if (addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1') {
+    return next();
+  }
+  return res.status(403).json({ error: 'forbidden' });
 }
 
 /** Rate limiter: max 5 login attempts per IP per 15 minutes. */
@@ -485,6 +621,90 @@ app.get('/pricing', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// Routes – Internal (reconciler / watchdog use)
+//
+// All routes under /internal are restricted to localhost-only via the
+// requireLocalhost middleware.  They do NOT require an admin session or CSRF
+// token so that the Rust reconciler daemon can call them without credentials.
+// ──────────────────────────────────────────────
+
+// GET /internal/users — return all user rows (no admin session required).
+app.get('/internal/users', requireLocalhost, async (req, res) => {
+  try {
+    const users = await all('SELECT * FROM users ORDER BY created_at DESC');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /internal/allow/:mac — allow a device (no admin session / CSRF required).
+app.post('/internal/allow/:mac', requireLocalhost, async (req, res) => {
+  const rawMac = req.params.mac;
+  if (!MAC_RE.test(rawMac)) {
+    return res.status(400).json({ error: 'Invalid MAC address' });
+  }
+  const mac = normaliseMac(rawMac);
+  try {
+    allow(mac);
+    await run("UPDATE users SET status = 'active' WHERE mac = ?", [mac]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /internal/block/:mac — block a device (no admin session / CSRF required).
+app.post('/internal/block/:mac', requireLocalhost, async (req, res) => {
+  const rawMac = req.params.mac;
+  if (!MAC_RE.test(rawMac)) {
+    return res.status(400).json({ error: 'Invalid MAC address' });
+  }
+  const mac = normaliseMac(rawMac);
+  try {
+    const user = await get('SELECT ip FROM users WHERE mac = ?', [mac]);
+    if (user && user.ip) block(user.ip, mac);
+    await run("UPDATE users SET status = 'blocked', time_left = 0 WHERE mac = ?", [mac]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /internal/restart-portal — called by the watchdog (Node or Rust) to
+// restart the DNS captive portal when a resolver failure is detected.
+app.post('/internal/restart-portal', requireLocalhost, async (req, res) => {
+  const reason  = (req.body && typeof req.body.reason === 'string')
+    ? req.body.reason : 'unknown';
+  const failures = (req.body && typeof req.body.consecutive_failures === 'number')
+    ? req.body.consecutive_failures : 0;
+
+  console.log(
+    `[server] /internal/restart-portal — reason: ${reason}, consecutive_failures: ${failures}`
+  );
+
+  if (DNS_SERVER_MODE === 'child') {
+    try {
+      await restartDnsChildProcess();
+      console.log('[server] dns-server child process restarted successfully');
+      return res.json({ ok: true, restarted: true, reason, ts: Date.now() });
+    } catch (err) {
+      console.error('[server] dns-server restart failed:', err.message);
+      return res.status(500).json({ error: 'restart failed', message: err.message });
+    }
+  }
+
+  // External mode: the DNS process is managed by start.ps1 or another supervisor.
+  // Log the request but do not attempt a restart — return ok=false so the caller
+  // knows nothing was done.
+  console.warn(
+    '[server] /internal/restart-portal — DNS_SERVER_MODE is not "child"; ' +
+    'restart skipped. Set DNS_SERVER_MODE=child to enable in-process management.'
+  );
+  res.json({ ok: true, restarted: false, reason, ts: Date.now() });
+});
+
+// ──────────────────────────────────────────────
 // WebSocket — live push to admin dashboard
 // ──────────────────────────────────────────────
 const httpServer = http.createServer(app);
@@ -534,6 +754,25 @@ module.exports = { app, broadcast };
 // ──────────────────────────────────────────────
 initDB()
   .then(() => {
+    // Apply network tuning (idempotent; safe on every start)
+    applyTuning();
+
+    // DNS child process management + watchdog wiring.
+    if (DNS_SERVER_MODE === 'child') {
+      // Spawn dns-server.js as a managed child so the watchdog can restart it.
+      _dnsChildProc = spawnDnsServer();
+      watchdog.registerDnsServer({ restart: restartDnsChildProcess });
+      watchdog.start();
+      console.log('[server] DNS server running as managed child process (DNS_SERVER_MODE=child)');
+    } else {
+      // External mode: dns-server.js is started by start.ps1 or another supervisor.
+      // The Node watchdog cannot restart an external process, so skip starting it.
+      console.warn(
+        '[server] DNS_SERVER_MODE is not "child" — watchdog DNS restart disabled. ' +
+        'Set DNS_SERVER_MODE=child to enable managed restart.'
+      );
+    }
+
     httpServer.listen(PORT, () => {
       console.log(`🔥 WiFi Zone OS V3 running at http://localhost:${PORT}`);
       console.log(`📡 WebSocket live feed at  ws://localhost:${PORT}/ws`);
