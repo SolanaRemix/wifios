@@ -89,6 +89,8 @@ function detectWanInterface(callback) {
 
 function applyQdisc(iface, preferCake) {
   const qtype = preferCake ? 'cake' : 'fq_codel';
+  // Allow override via env var; default 1Gbit suits most Starlink + GigE setups.
+  const cakeBandwidth = process.env.CAKE_BANDWIDTH || '1Gbit';
 
   // Check if the desired qdisc is already active to stay idempotent.
   execFile('tc', ['qdisc', 'show', 'dev', iface], (err, stdout) => {
@@ -104,7 +106,7 @@ function applyQdisc(iface, preferCake) {
 
     // CAKE needs a bandwidth hint; without it, it still works as an AQM.
     const args = preferCake
-      ? ['qdisc', 'replace', 'dev', iface, 'root', 'cake', 'bandwidth', '1Gbit', 'nat', 'ethernet']
+      ? ['qdisc', 'replace', 'dev', iface, 'root', 'cake', 'bandwidth', cakeBandwidth, 'nat', 'ethernet']
       : ['qdisc', 'replace', 'dev', iface, 'root', 'fq_codel'];
 
     execFile('tc', args, (e) => {

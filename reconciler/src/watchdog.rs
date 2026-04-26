@@ -60,7 +60,7 @@ fn is_valid_dns_response(buf: &[u8], tx_id: u16) -> bool {
     let rcode = flags & 0x000F;         // 0 = no error, 3 = NXDOMAIN (still responsive)
     let ancount = u16::from_be_bytes([buf[6], buf[7]]);
 
-    qr == 1 && (rcode == 0 || rcode == 3) && ancount > 0 || (qr == 1 && rcode == 3)
+    (qr == 1) && ((rcode == 0 && ancount > 0) || rcode == 3)
 }
 
 /// Probe DNS once.  Returns true on success (any non-error response received).

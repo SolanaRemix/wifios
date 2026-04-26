@@ -499,6 +499,7 @@ Environment variables (optional):
 | `WAN_IFACE` | auto-detected | WAN interface for qdisc tuning |
 | `MAC_STALE_SECS` | `300` | Seconds before stale randomized MAC is pruned |
 | `DNS_RESOLVER` | `127.0.0.1` | DNS resolver for watchdog probes |
+| `CAKE_BANDWIDTH` | `1Gbit` | Bandwidth hint for CAKE qdisc (e.g. `250Mbit` for Starlink) |
 
 ---
 

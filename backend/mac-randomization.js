@@ -97,16 +97,25 @@ async function markRandomized(mac, isRandomized) {
  * than STALE_THRESHOLD_SECS.  Only removes 'expired' and 'blocked' entries to
  * avoid touching active sessions.
  *
+ * The threshold timestamp is computed once so SQLite can use the index on
+ * `updated_at` rather than evaluating a per-row expression.
+ *
  * @returns {Promise<number>} Number of rows removed.
  */
 async function pruneStaleRandomizedSessions() {
   try {
+    // Compute the cutoff as an ISO-8601 string that SQLite's DATETIME() understands.
+    const cutoff = new Date(Date.now() - STALE_THRESHOLD_SECS * 1000)
+      .toISOString()
+      .replace('T', ' ')
+      .slice(0, 19); // "YYYY-MM-DD HH:MM:SS"
+
     const result = await run(
       `DELETE FROM users
        WHERE is_randomized = 1
          AND status IN ('expired', 'blocked')
-         AND (strftime('%s', 'now') - strftime('%s', updated_at)) > ?`,
-      [STALE_THRESHOLD_SECS]
+         AND updated_at < ?`,
+      [cutoff]
     );
     const pruned = result.changes || 0;
     if (pruned > 0) {

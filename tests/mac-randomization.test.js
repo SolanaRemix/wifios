@@ -31,7 +31,7 @@ const { isRandomizedMac, STALE_THRESHOLD_SECS } = require('../backend/mac-random
 console.log('\n── isRandomizedMac ──');
 
 // Locally-administered MACs have bit 1 of octet 0 = 1 (e.g. 0x02 mask)
-assert(isRandomizedMac('02:00:00:00:00:01'),  'AA:00:00:00:00:01 (LA bit set, first octet 0x02)');
+assert(isRandomizedMac('02:00:00:00:00:01'),  '02:00:00:00:00:01 (LA bit set, first octet 0x02)');
 assert(isRandomizedMac('aa:bb:cc:dd:ee:ff'),  'aa:bb:cc:dd:ee:ff (0xaa = 0b10101010, LA bit set)');
 assert(isRandomizedMac('16:32:64:00:00:01'),  '16:32:... (0x16 & 0x02 = 0x02, LA bit set)');
 assert(!isRandomizedMac('00:11:22:33:44:55'), '00:11:... globally administered MAC');
