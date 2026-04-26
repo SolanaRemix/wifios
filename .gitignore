@@ -4,7 +4,12 @@ db/wifi.db-shm
 db/wifi.db-wal
 .env
 config/.session-secret
+config/session-state.json
+config/session-state.json.tmp
 *.log
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Rust build artifacts
+reconciler/target/

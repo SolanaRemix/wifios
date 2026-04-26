@@ -2,6 +2,7 @@
 
 const { exec } = require('child_process');
 const { run } = require('./db');
+const { isRandomizedMac, resolveSessionMac } = require('./mac-randomization');
 
 /**
  * Parse ARP output from both Windows and Unix (Linux/macOS) formats.
@@ -47,11 +48,15 @@ function parseArpOutput(stdout) {
 
 async function upsertDevices(devices) {
   for (const { ip, mac } of devices) {
+    // Resolve MAC: if it is randomized and the IP already has a canonical
+    // session, use the canonical MAC to avoid creating ghost entries.
+    const { mac: resolvedMac, isRandomized } = await resolveSessionMac(mac, ip);
+
     await run(
-      `INSERT INTO users (mac, ip)
-       VALUES (?, ?)
-       ON CONFLICT(mac) DO UPDATE SET ip = excluded.ip`,
-      [mac, ip]
+      `INSERT INTO users (mac, ip, is_randomized)
+       VALUES (?, ?, ?)
+       ON CONFLICT(mac) DO UPDATE SET ip = excluded.ip, is_randomized = excluded.is_randomized`,
+      [resolvedMac, ip, isRandomized ? 1 : 0]
     );
   }
 }

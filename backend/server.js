@@ -19,6 +19,8 @@ const { generateQR } = require('./qr');
 const { getStats } = require('./analytics');
 const { generateReceipt } = require('./receipt');
 const { block, allow } = require('./firewall');
+const { applyTuning } = require('./network-tuning');
+const watchdog = require('./watchdog');
 
 const app = express();
 
@@ -103,6 +105,17 @@ async function applySchemaFromFile() {
 
 async function initDB() {
   await applySchemaFromFile();
+
+  // Migrate existing databases: add columns introduced in later schema versions.
+  // These ALTER TABLE statements are safe to run multiple times because we
+  // catch the "duplicate column" error and continue.
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN is_randomized INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+  ];
+  for (const stmt of migrations) {
+    try { await run(stmt); } catch (_) { /* column already exists — skip */ }
+  }
 
   // Seed default admin with a random temporary password
   const admin = await get('SELECT id FROM admin WHERE username = ?', ['admin']);
@@ -485,6 +498,41 @@ app.get('/pricing', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// Routes – Internal (reconciler / watchdog use)
+// ──────────────────────────────────────────────
+
+// POST /internal/restart-portal — called by the watchdog to restart the DNS
+// captive portal after detecting resolver failure.  Only accepts requests from
+// localhost to prevent external abuse.
+app.post('/internal/restart-portal', (req, res) => {
+  const remoteAddr = req.socket.remoteAddress || '';
+  const isLocalhost =
+    remoteAddr === '127.0.0.1' ||
+    remoteAddr === '::1' ||
+    remoteAddr === '::ffff:127.0.0.1';
+  if (!isLocalhost) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+
+  const reason  = (req.body && typeof req.body.reason === 'string')
+    ? req.body.reason
+    : 'unknown';
+  const failures = (req.body && typeof req.body.consecutive_failures === 'number')
+    ? req.body.consecutive_failures
+    : 0;
+
+  console.log(
+    `[server] /internal/restart-portal called — reason: ${reason}, ` +
+    `consecutive_failures: ${failures}`
+  );
+
+  // Re-require dns-server to restart it.  In production this would send a
+  // signal; for this architecture we simply log the event — the watchdog.js
+  // module holds a reference to the actual DNS server and calls server.restart().
+  res.json({ ok: true, reason, ts: Date.now() });
+});
+
+// ──────────────────────────────────────────────
 // WebSocket — live push to admin dashboard
 // ──────────────────────────────────────────────
 const httpServer = http.createServer(app);
@@ -534,6 +582,12 @@ module.exports = { app, broadcast };
 // ──────────────────────────────────────────────
 initDB()
   .then(() => {
+    // Apply network tuning (idempotent; safe on every start)
+    applyTuning();
+
+    // Start DNS resolver watchdog
+    watchdog.start();
+
     httpServer.listen(PORT, () => {
       console.log(`🔥 WiFi Zone OS V3 running at http://localhost:${PORT}`);
       console.log(`📡 WebSocket live feed at  ws://localhost:${PORT}/ws`);

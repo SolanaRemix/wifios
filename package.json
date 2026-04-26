@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node backend/server.js",
     "dev": "nodemon backend/server.js",
-    "init-db": "node scripts/init-db.js"
+    "init-db": "node scripts/init-db.js",
+    "test": "node tests/mac-randomization.test.js && node tests/atomic-persistence.test.js && node tests/watchdog.test.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

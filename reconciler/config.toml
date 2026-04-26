@@ -1,0 +1,72 @@
+# wifios-reconciler configuration
+# Copy to reconciler/config.toml and adjust for your deployment.
+# All durations are in seconds unless noted otherwise.
+
+[general]
+# Path to the durable desired-state JSON file.
+# Uses atomic write: temp → fsync → rename → fsync(dir)
+state_file = "../config/session-state.json"
+
+# Directory containing state_file (used for directory fsync).
+state_dir  = "../config"
+
+# Logging level: error | warn | info | debug | trace
+log_level = "info"
+
+[reconciler]
+# How often to run a full reconcile cycle (seconds).
+reconcile_interval_secs = 10
+
+# Maximum seconds allowed for startup state recovery.
+recovery_timeout_secs = 5
+
+# Backend API base URL (the Node.js Express server).
+api_base_url = "http://127.0.0.1:3000"
+
+# Time in seconds after which a randomized/stale MAC session is expired.
+stale_mac_expiry_secs = 300
+
+[watchdog]
+# How often to probe the DNS resolver (seconds).
+probe_interval_secs = 15
+
+# DNS resolver address to probe.
+dns_resolver = "127.0.0.1"
+
+# DNS resolver port.
+dns_port = 53
+
+# Domain to resolve as a health check probe.
+probe_domain = "google.com"
+
+# Number of consecutive failures before triggering a restart.
+failure_threshold = 3
+
+# Minimum seconds between restart attempts (base backoff).
+restart_backoff_min_secs = 10
+
+# Maximum seconds between restart attempts (exponential cap).
+restart_backoff_max_secs = 300
+
+# Maximum restart attempts in any rolling 10-minute window (storm guard).
+max_restarts_per_window = 5
+
+# Jitter range in milliseconds added to probe interval to avoid thundering herd.
+jitter_ms = 2000
+
+[sysctl]
+# Whether to apply sysctl tuning on startup (Linux only; no-op on other OS).
+apply_on_startup = true
+
+# TCP keepalive: seconds before sending keepalive probes on idle connections.
+# Lower values detect silent Starlink handover drops faster.
+tcp_keepalive_time    = 120
+
+# TCP keepalive: seconds between individual keepalive probes.
+tcp_keepalive_intvl   = 15
+
+# TCP keepalive: number of unacknowledged probes before the connection is dropped.
+tcp_keepalive_probes  = 5
+
+# TCP: number of retransmits before giving up on a connection.
+tcp_retries2          = 8
