@@ -22,6 +22,9 @@ const BACKOFF_MAX_MS          = parseInt(process.env.WD_BACKOFF_MAX_MS     || '3
 const MAX_RESTARTS_PER_WINDOW = parseInt(process.env.WD_MAX_RESTARTS       || '5',     10);
 const WINDOW_MS               = 10 * 60 * 1000; // 10 minutes
 const JITTER_MAX_MS           = parseInt(process.env.WD_JITTER_MS          || '2000',  10);
+// Explicit per-probe timeout — dns.promises.Resolver constructor options do
+// not apply a per-query timeout, so we enforce one via Promise.race.
+const DNS_TIMEOUT_MS          = parseInt(process.env.WD_DNS_TIMEOUT_MS     || '2000',  10);
 
 // DNS resolver to probe (defaults to the system resolver)
 const DNS_RESOLVER = process.env.DNS_RESOLVER || '127.0.0.1';
@@ -48,10 +51,18 @@ function registerDnsServer(ref) {
 // ─── Probe ───────────────────────────────────────────────────────────────────
 
 async function probeDns() {
-  const resolver = new Resolver({ timeout: 2000 });
+  const resolver = new Resolver();
   resolver.setServers([`${DNS_RESOLVER}:${DNS_PORT}`]);
+
+  // dns.promises.Resolver does not apply the timeout from its constructor
+  // options, so we bound the probe duration explicitly with Promise.race.
+  const probePromise = resolver.resolve4(PROBE_DOMAIN);
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('DNS probe timeout')), DNS_TIMEOUT_MS)
+  );
+
   try {
-    await resolver.resolve4(PROBE_DOMAIN);
+    await Promise.race([probePromise, timeoutPromise]);
     return true;
   } catch (_) {
     return false;

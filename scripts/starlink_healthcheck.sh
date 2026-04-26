@@ -80,13 +80,13 @@ check_dns() {
     log "$INFO Checking DNS resolver ($DNS_RESOLVER)..."
     if command -v dig &>/dev/null; then
         local result
-        result=$(dig +short +time="$DNS_TIMEOUT" +tries=1 \
-                     "@${DNS_RESOLVER}" "$DNS_TEST_DOMAIN" A 2>&1)
-        if [[ -z "$result" ]]; then
-            fail "$FAIL CRITICAL: DNS resolver $DNS_RESOLVER returned empty response for $DNS_TEST_DOMAIN"
-            mark_critical
-        else
+        if result=$(dig +short +time="$DNS_TIMEOUT" +tries=1 \
+                        "@${DNS_RESOLVER}" "$DNS_TEST_DOMAIN" A 2>/dev/null) \
+           && grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' <<<"$result"; then
             log "$PASS DNS resolver responsive: $DNS_TEST_DOMAIN -> $result"
+        else
+            fail "$FAIL CRITICAL: DNS resolver $DNS_RESOLVER returned no valid A record for $DNS_TEST_DOMAIN"
+            mark_critical
         fi
     elif command -v nslookup &>/dev/null; then
         if timeout "$DNS_TIMEOUT" nslookup "$DNS_TEST_DOMAIN" "$DNS_RESOLVER" \

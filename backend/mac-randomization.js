@@ -67,7 +67,9 @@ async function resolveSessionMac(mac, ip) {
       console.log(
         `[mac-random] dedup: randomized ${mac} → canonical ${canonicalMac} (same IP ${ip})`
       );
-      return { mac: canonicalMac, isRandomized: true, wasDeduped: true };
+      // The resolved MAC is the canonical (globally-administered) MAC, so
+      // isRandomized reflects the resolved MAC — not the original.
+      return { mac: canonicalMac, isRandomized: false, wasDeduped: true };
     }
   }
 

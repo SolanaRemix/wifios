@@ -15,7 +15,6 @@ use crate::config::{Config, WatchdogConfig};
 use log::{debug, error, info, warn};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::time::sleep;
 
 /// Simple DNS question record — we build a minimal UDP DNS A-query by hand
 /// so we have zero extra dependencies for this hot path.
@@ -116,8 +115,12 @@ pub async fn run_watchdog(cfg: Config) {
     let window_secs: u64               = 600; // 10 minutes
 
     loop {
-        // ── Probe ──────────────────────────────────────────────────────────
-        let ok = probe_dns_once(wdcfg);
+        // ── Probe (runs on a dedicated blocking thread to avoid blocking the
+        //           Tokio worker and delaying other async tasks) ─────────────
+        let wdcfg_clone = wdcfg.clone();
+        let ok = tokio::task::spawn_blocking(move || probe_dns_once(&wdcfg_clone))
+            .await
+            .unwrap_or(false);
 
         if ok {
             if consecutive_failures > 0 {
@@ -186,7 +189,7 @@ pub async fn run_watchdog(cfg: Config) {
         };
         let sleep_ms = interval_ms.saturating_add(jitter_ms);
         debug!("[watchdog] sleeping {}ms", sleep_ms);
-        sleep(Duration::from_millis(sleep_ms)).await;
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
     }
 }
 

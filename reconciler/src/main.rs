@@ -13,7 +13,6 @@ mod state_store;
 mod watchdog;
 mod sysctl;
 
-use config::Config;
 use log::info;
 use std::time::Duration;
 
@@ -44,14 +43,16 @@ async fn main() {
     info!("[main] startup recovery: {restored} session(s) restored");
 
     // ── Spawn reconciler loop ─────────────────────────────────────────────
+    // The Reconciler uses reqwest::blocking and std::fs — run it on a
+    // dedicated thread via spawn_blocking to avoid stalling Tokio workers.
     let cfg_rec = cfg.clone();
     let reconcile_interval = Duration::from_secs(cfg.reconciler.reconcile_interval_secs);
 
-    let rec_task = tokio::spawn(async move {
+    let rec_task = tokio::task::spawn_blocking(move || {
         let r = reconciler::Reconciler::new(cfg_rec);
         loop {
             r.reconcile();
-            tokio::time::sleep(reconcile_interval).await;
+            std::thread::sleep(reconcile_interval);
         }
     });
 

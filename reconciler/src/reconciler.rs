@@ -9,7 +9,7 @@
 //              pruned from desired state (dedup by IP when applicable).
 
 use crate::config::Config;
-use crate::state_store::{DesiredState, SessionEntry, StateStore};
+use crate::state_store::{now_secs, SessionEntry, StateStore};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use serde::Deserialize;
@@ -197,6 +197,31 @@ impl Reconciler {
             }
         }
 
+        // ── Converge: live → desired for live-only sessions ────────────────
+        // Sessions present in the live backend but absent from the desired
+        // snapshot are imported so the snapshot stays the authoritative source
+        // of truth and drift is detected on the next cycle.
+        for live_entry in &live {
+            if !desired.sessions.contains_key(&live_entry.mac) {
+                info!(
+                    "[reconciler] {} present in live but absent from desired — importing",
+                    live_entry.mac
+                );
+                desired.sessions.insert(
+                    live_entry.mac.clone(),
+                    SessionEntry {
+                        mac:          live_entry.mac.clone(),
+                        ip:           live_entry.ip.clone(),
+                        status:       live_entry.status.clone(),
+                        time_left:    live_entry.time_left,
+                        is_randomized: false,
+                        last_seen:    now_secs(),
+                    },
+                );
+                changes += 1;
+            }
+        }
+
         if changes > 0 {
             info!("[reconciler] reconciliation cycle: {changes} change(s)");
             // Persist updated desired state after pruning/dedup.
@@ -211,19 +236,22 @@ impl Reconciler {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     fn fetch_live_sessions(&self) -> anyhow::Result<Vec<LiveSession>> {
-        let url = format!("{}/users", self.cfg.reconciler.api_base_url);
+        // Use the localhost-only /internal/users endpoint which does not require
+        // an admin session cookie or CSRF token.
+        let url = format!("{}/internal/users", self.cfg.reconciler.api_base_url);
         let resp = self.http.get(&url).send()?;
         if !resp.status().is_success() {
-            anyhow::bail!("GET /users returned {}", resp.status());
+            anyhow::bail!("GET /internal/users returned {}", resp.status());
         }
         Ok(resp.json::<Vec<LiveSession>>()?)
     }
 
     fn apply_entry(&self, mac: &str, entry: &SessionEntry) -> anyhow::Result<()> {
         let base = &self.cfg.reconciler.api_base_url;
+        // Use localhost-only /internal endpoints that bypass admin auth + CSRF.
         let endpoint = match entry.status.as_str() {
-            "active" => format!("{base}/allow/{mac}"),
-            _        => format!("{base}/block/{mac}"),
+            "active" => format!("{base}/internal/allow/{mac}"),
+            _        => format!("{base}/internal/block/{mac}"),
         };
         let resp = self.http.post(&endpoint).send()?;
         if !resp.status().is_success() {
@@ -234,6 +262,7 @@ impl Reconciler {
 
     /// Update the desired state store with a session entry from the backend.
     /// Called externally to integrate live DB changes into the durable snapshot.
+    #[allow(dead_code)]
     pub fn update_session(
         &self,
         mac:          &str,

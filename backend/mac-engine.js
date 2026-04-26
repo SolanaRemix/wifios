@@ -50,13 +50,20 @@ async function upsertDevices(devices) {
   for (const { ip, mac } of devices) {
     // Resolve MAC: if it is randomized and the IP already has a canonical
     // session, use the canonical MAC to avoid creating ghost entries.
-    const { mac: resolvedMac, isRandomized } = await resolveSessionMac(mac, ip);
+    const { mac: resolvedMac } = await resolveSessionMac(mac, ip);
+
+    // Compute is_randomized from the *resolved* MAC so that when a randomized
+    // MAC is deduped onto the canonical, the canonical row keeps is_randomized=0.
+    const resolvedIsRandomized = isRandomizedMac(resolvedMac);
 
     await run(
-      `INSERT INTO users (mac, ip, is_randomized)
-       VALUES (?, ?, ?)
-       ON CONFLICT(mac) DO UPDATE SET ip = excluded.ip, is_randomized = excluded.is_randomized`,
-      [resolvedMac, ip, isRandomized ? 1 : 0]
+      `INSERT INTO users (mac, ip, is_randomized, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(mac) DO UPDATE SET
+         ip           = excluded.ip,
+         is_randomized = excluded.is_randomized,
+         updated_at   = CURRENT_TIMESTAMP`,
+      [resolvedMac, ip, resolvedIsRandomized ? 1 : 0]
     );
   }
 }

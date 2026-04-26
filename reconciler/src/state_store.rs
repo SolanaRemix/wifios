@@ -51,7 +51,7 @@ impl SessionEntry {
     }
 }
 
-fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -98,10 +98,22 @@ impl StateStore {
         // Create the destination directory if it doesn't exist yet.
         std::fs::create_dir_all(dir_path)?;
 
-        // Write to a temp file in the same directory.
+        // Write to a temp file in the same directory with restrictive permissions.
         let tmp_path = state_path.with_extension("json.tmp");
         {
+            #[cfg(unix)]
+            let mut tmp = {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&tmp_path)?
+            };
+            #[cfg(not(unix))]
             let mut tmp = std::fs::File::create(&tmp_path)?;
+
             tmp.write_all(json_bytes)?;
             tmp.flush()?;
             tmp.sync_all()?;   // fsync data + metadata

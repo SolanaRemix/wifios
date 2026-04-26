@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Async runtime — minimal features to reduce binary size on MIPS/ARM
-tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "io-util", "sync", "macros", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "io-util", "sync", "macros", "signal", "rt"] }
 # JSON state serialisation
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,12 +21,14 @@ log = "0.4"
 env_logger = "0.11"
 # TOML config file parsing
 toml = "0.8"
-# Unique IDs for state entries
-uuid = { version = "1", features = ["v4"] }
-# File system helpers
+# HTTP client (lightweight) for portal health check — json feature required for .json() / resp.json()
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+# Error handling helpers
+anyhow = "1"
+
+[dev-dependencies]
+# Temporary directories for Rust unit tests
 tempfile = "3"
-# HTTP client (lightweight) for portal health check
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 
 [profile.release]
 # Optimise for size on MIPS/ARM routers
