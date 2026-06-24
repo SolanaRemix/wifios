@@ -10,7 +10,7 @@
     "test": "node tests/mac-randomization.test.js && node tests/atomic-persistence.test.js && node tests/watchdog.test.js"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "dns2": "^2.1.0",
     "express": "^4.22.2",
     "express-rate-limit": "^7.5.0",
@@ -19,7 +19,7 @@
     "sqlite3": "^6.0.1",
     "systeminformation": "^5.31.6",
     "uuid": "^14.0.0",
-    "ws": "^8.20.1"
+    "ws": "^8.21.0"
   },
   "engines": {
     "node": ">=16.0.0"
